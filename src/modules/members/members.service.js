@@ -35,7 +35,7 @@ export const createMember = async (req, res, next) => {
                 memberName: fname + " " + lname,
                 memberEmail: email,
                 memberPassword: password,
-                signInUrl: process.env.APP_URL || req.headers.origin || "https://taskverse-frontend-ochre.vercel.app/app",
+                signInUrl: "https://taskverse-frontend-ochre.vercel.app/app",
                 invitedBy: req.member?.fname + " " + req.member?.lname,
             })
         })
