@@ -27,19 +27,6 @@ export const createMember = async (req, res, next) => {
         throw new Error("Member already exists")
     }
 
-    emailEventEmitter.emit(eventsEnum.confirmEmail, async () => {
-        await sendEmail({
-            to: email,
-            subject: "confirm email",
-            html: signInInvitationTemplate({
-                memberName: fname + " " + lname,
-                memberEmail: email,
-                memberPassword: password,
-                signInUrl: "https://taskverse-frontend-ochre.vercel.app/app",
-                invitedBy: req.member?.fname + " " + req.member?.lname,
-            })
-        })
-    })
 
     const encPassword = hashSync(password, Number(HASH_SALT))
 
@@ -66,6 +53,19 @@ export const createMember = async (req, res, next) => {
         }
     })
 
+    emailEventEmitter.emit(eventsEnum.confirmEmail, async () => {
+        await sendEmail({
+            to: email,
+            subject: "confirm email",
+            html: signInInvitationTemplate({
+                memberName: fname + " " + lname,
+                memberEmail: email,
+                memberPassword: password,
+                signInUrl: "https://taskverse-frontend-ochre.vercel.app/app",
+                invitedBy: req.member?.fname + " " + req.member?.lname,
+            })
+        })
+    })
     successResponse({
         res,
         status: 201,
