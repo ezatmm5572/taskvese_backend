@@ -28,7 +28,8 @@ export const createNotification = async ({
         });
 
         if (sendEmailNotification) {
-            const member = await memberModel.findById(user);
+            const userId = user?._id || user;
+            const member = await memberModel.findById(userId);
             if (member && member.email) {
                 // Check preferences
                 const prefs = member.preferences || {};

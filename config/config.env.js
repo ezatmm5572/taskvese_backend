@@ -5,13 +5,23 @@ import { existsSync } from "node:fs";
 
 const env = process.env.NODE_ENV || "development";
 const envPath = env === "production" ? ".production" : ".development";
-const resolvedEnv = resolve(`config/.env${envPath}`);
 
-if (existsSync(resolvedEnv)) {
-    dotenv.config({ path: resolvedEnv });
-} else {
-    dotenv.config();
+// Look for env files in priority order
+const candidateEnvFiles = [
+    resolve(`config/.env.${env}`),
+    resolve(`config/.env${envPath}`),
+    resolve(`.env.${env}`),
+    resolve(".env"),
+    resolve("config/.env.development"),
+];
+
+for (const envFile of candidateEnvFiles) {
+    if (existsSync(envFile)) {
+        dotenv.config({ path: envFile });
+        break;
+    }
 }
+dotenv.config();
 
 export const DBURI = process.env.DB_URI;
 export const PORT = process.env.PORT || 3000;
@@ -25,3 +35,4 @@ export const CLOUDENARY_API_SECRET = process.env.API_SECRET_CLOUDENARY;
 export const JWT_SECRET = process.env.JWT_SECRET;
 export const HASH_SALT = process.env.HASH_SALT;
 export const ENCRYPTION_KEY_ENV = process.env.ENCRYPTION_KEY_ENV;
+

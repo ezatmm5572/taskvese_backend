@@ -7,7 +7,8 @@ export default async function handler(req, res) {
         // Wait for the response to finish, then let any queued emails (OTP, invitations)
         // complete before the serverless function is frozen.
         await new Promise((resolve) => {
-            res.on("close", resolve);
+            res.once("finish", resolve);
+            res.once("close", resolve);
             app(req, res);
         });
         await flushEmails();

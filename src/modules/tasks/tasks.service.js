@@ -22,9 +22,6 @@ import {
 import { successResponse } from "../../commn/utils/successResponse.js";
 import { TaskStatusEnum, normalizeTaskStatus } from "../../commn/enums/task.enums.js";
 import { taskAssignedTemplate } from "../../commn/email/email_task.teamplate.js";
-import emailEventEmitter from "../../commn/email/email.events.js";
-import { eventsEnum } from "../../commn/enums/eventsEnum.js";
-import { sendEmail } from "../../commn/email/send.email.js";
 import { recordActivity } from "../../commn/utils/activity.service.js";
 import { createNotification } from "../../commn/utils/notification.service.js";
 import {
