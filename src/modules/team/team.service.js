@@ -1,209 +1,495 @@
+import mongoose from "mongoose";
 import { successResponse } from "../../commn/utils/successResponse.js";
-import * as DB_services from "../../DB/DB.service.js"
+import * as DB_services from "../../DB/DB.service.js";
 import memberModel from "../../DB/models/member.js";
 import teamModel from "../../DB/models/team.js";
 import taskModel from "../../DB/models/task.js";
-import { isTeamManager } from "../../commn/utils/permissions.js";
+import activityModel from "../../DB/models/activity.js";
+import { isTeamManager, httpError, normalizeTeamRole } from "../../commn/utils/permissions.js";
+import { recordActivity } from "../../commn/utils/activity.service.js";
 
-
-export const createTeam = async(req,res,next)=>{
-    const {name} = req.body
+export const createTeam = async (req, res, next) => {
+    const { name } = req.body;
 
     const team = await DB_services.createDocument({
-        model:teamModel,
-        doc:{
+        model: teamModel,
+        doc: {
             name,
-            addedBy:req.member._id,
-            teamAdims:[req.member._id],
-            teamMembers:[req.member._id]
-        }
-    })
+            addedBy: req.member._id,
+            teamAdims: [req.member._id],
+            teamMembers: [req.member._id],
+        },
+    });
 
     await DB_services.updateDocument({
-        model:memberModel,
-        filter:{_id:req.member._id},
-        update:{$push:{teams:{teamId:team._id,role:"teamAdmin"}}}
-    })
-    
+        model: memberModel,
+        filter: { _id: req.member._id },
+        update: { $push: { teams: { teamId: team._id, role: "admin" } } },
+    });
+
+    await recordActivity({
+        actor: req.member._id,
+        action: "team_created",
+        team: team._id,
+        meta: { name: team.name },
+    });
+
     successResponse({
         res,
-        status:201,
-        message:"Team created successfully",
-        data: team
-    })
-}
+        status: 201,
+        message: "Team created successfully",
+        data: team,
+    });
+};
 
-export const getAllTeams = async(req,res,next)=>{
-    const filter = req.member.role === 'admin'
-        ? {}
-        : { $or: [{ teamMembers: req.member._id }, { addedBy: req.member._id }, { teamAdims: req.member._id }] }
-    const teams = await teamModel.find(filter)
+export const getAllTeams = async (req, res, next) => {
+    const filter = {
+        deletedAt: null,
+        ...(req.member.role === "admin"
+            ? {}
+            : {
+                  $or: [
+                      { teamMembers: req.member._id },
+                      { addedBy: req.member._id },
+                      { teamAdims: req.member._id },
+                  ],
+              }),
+    };
+
+    const teams = await teamModel
+        .find(filter)
         .populate("teamMembers", "fname lname email")
         .populate("addedBy", "fname lname email")
+        .sort({ createdAt: -1 });
+
+    successResponse({
+        res,
+        status: 200,
+        message: "All teams",
+        data: teams || [],
+    });
+};
+
+export const getTeamById = async (req, res, next) => {
+    const { id } = req.params;
+
+    const team = await teamModel
+        .findOne({ _id: id, deletedAt: null })
+        .populate("teamMembers", "fname lname email profilePicture")
+        .populate("teamAdims", "fname lname email profilePicture")
+        .populate("addedBy", "fname lname email profilePicture");
+
+    if (!team) {
+        throw httpError("Team not found", 404, "NOT_FOUND");
+    }
+
+    // Get task counts for this team
+    const totalTasks = await taskModel.countDocuments({ team: id, deletedAt: null });
+    const completedTasks = await taskModel.countDocuments({
+        team: id,
+        deletedAt: null,
+        completedAt: { $ne: null },
+    });
+    const overdueTasks = await taskModel.countDocuments({
+        team: id,
+        deletedAt: null,
+        completedAt: null,
+        endDate: { $lt: new Date() },
+    });
+
+    // Populate role per member
+    const membersWithRole = await Promise.all(
+        (team.teamMembers || []).map(async (m) => {
+            const memberDoc = await memberModel.findById(m._id);
+            const teamEntry = (memberDoc?.teams || []).find(
+                (t) => String(t.teamId) === String(team._id)
+            );
+            const role = normalizeTeamRole(teamEntry?.role);
+            return {
+                member: m,
+                role: (team.teamAdims || []).some((a) => String(a._id) === String(m._id))
+                    ? "admin"
+                    : role,
+            };
+        })
+    );
+
+    const teamObj = team.toObject();
+    teamObj.membersWithRoles = membersWithRole;
+    teamObj.taskCounts = {
+        total: totalTasks,
+        completed: completedTasks,
+        open: totalTasks - completedTasks,
+        overdue: overdueTasks,
+    };
+
+    successResponse({
+        res,
+        status: 200,
+        message: "Team details",
+        data: teamObj,
+    });
+};
+
+export const getTeamActivity = async (req, res, next) => {
+    const { id } = req.params;
+
+    const team = await teamModel.findOne({ _id: id, deletedAt: null });
+    if (!team) {
+        throw httpError("Team not found", 404, "NOT_FOUND");
+    }
+
+    const activities = await activityModel
+        .find({ team: id })
+        .populate("actor", "fname lname email profilePicture")
+        .populate("task", "title")
         .sort({ createdAt: -1 })
+        .limit(100);
+
     successResponse({
         res,
-        status:200,
-        message:"All teams",
-        data: teams || []
-    })
-}
+        status: 200,
+        message: "Team activity log",
+        data: activities || [],
+    });
+};
 
-export const addMemberToTeam = async(req,res,next)=>{
-    const {teamId,memberId,member_email,role} = req.body
-    
-    const team = await DB_services.findOne({model:teamModel,filter:{_id:teamId}})
-    if(!team){
-        throw new Error("Team not found")
+export const addMemberToTeam = async (req, res, next) => {
+    const { teamId, memberId, memberIds, role = "editor" } = req.body;
+
+    const team = await DB_services.findOne({ model: teamModel, filter: { _id: teamId, deletedAt: null } });
+    if (!team) {
+        throw httpError("Team not found", 404, "NOT_FOUND");
     }
-    const filter = memberId ? { _id: memberId } : { email: member_email }
-    const member = await DB_services.findOne({model:memberModel,filter})
-    if(!member){
-        throw new Error("Member not found")
+
+    if (!isTeamManager(team, req.member)) {
+        throw httpError("You are not the team admin", 403, "NOT_TEAM_MANAGER");
     }
-    const isMember = await DB_services.findOne({model:teamModel,filter:{_id:teamId,teamMembers:member._id}})
-    if(isMember){
-        throw new Error("Member already in team")
+
+    const canonicalRole = normalizeTeamRole(role);
+    const asAdmin = canonicalRole === "admin";
+
+    // Bulk mode
+    if (Array.isArray(memberIds) && memberIds.length > 0) {
+        const added = [];
+        for (const mId of memberIds) {
+            if (!mongoose.isValidObjectId(mId)) continue;
+            const member = await DB_services.findOne({ model: memberModel, filter: { _id: mId } });
+            if (!member) continue;
+
+            const isMember = await DB_services.findOne({
+                model: teamModel,
+                filter: { _id: teamId, teamMembers: member._id },
+            });
+            if (isMember) continue;
+
+            await DB_services.updateDocument({
+                model: teamModel,
+                filter: { _id: teamId },
+                update: {
+                    $addToSet: asAdmin
+                        ? { teamMembers: member._id, teamAdims: member._id }
+                        : { teamMembers: member._id },
+                },
+            });
+
+            await DB_services.updateDocument({
+                model: memberModel,
+                filter: { _id: member._id },
+                update: {
+                    $push: {
+                        teams: { teamId: team._id, role: canonicalRole },
+                    },
+                },
+            });
+
+            added.push(mId);
+
+            await recordActivity({
+                actor: req.member._id,
+                action: "member_added_to_team",
+                team: teamId,
+                meta: { memberId: member._id, role: canonicalRole },
+            });
+        }
+
+        return successResponse({
+            res,
+            status: 200,
+            message: "Members added to team successfully",
+            data: { teamId, addedMembers: added },
+        });
     }
-    const isTeamAdmin = isTeamManager(team, req.member);
-    if(!isTeamAdmin){
-        throw new Error("You are not the team admin")
+
+    // Single mode
+    const targetId = memberId;
+    if (!targetId || !mongoose.isValidObjectId(targetId)) {
+        throw httpError("A valid memberId is required", 400, "VALIDATION_ERROR");
     }
-    const asAdmin = role === "admin"
+
+    const member = await DB_services.findOne({ model: memberModel, filter: { _id: targetId } });
+    if (!member) {
+        throw httpError("Member not found", 404, "USER_NOT_FOUND");
+    }
+
+    const isMember = await DB_services.findOne({
+        model: teamModel,
+        filter: { _id: teamId, teamMembers: member._id },
+    });
+    if (isMember) {
+        throw httpError("Member already in team", 409, "MEMBER_EXISTS");
+    }
+
     await DB_services.updateDocument({
-        model:teamModel,
-        filter:{_id:teamId},
-        update:{$addToSet: asAdmin ? {teamMembers:member._id, teamAdims:member._id} : {teamMembers:member._id}}
-    })
+        model: teamModel,
+        filter: { _id: teamId },
+        update: {
+            $addToSet: asAdmin
+                ? { teamMembers: member._id, teamAdims: member._id }
+                : { teamMembers: member._id },
+        },
+    });
+
     await DB_services.updateDocument({
-        model:memberModel,
-        filter:{_id:member._id},
-        update:{$push:{teams:{teamId:team._id,role: asAdmin ? "teamAdmin" : "teamMember"}}}
-    })
+        model: memberModel,
+        filter: { _id: member._id },
+        update: {
+            $push: {
+                teams: { teamId: team._id, role: canonicalRole },
+            },
+        },
+    });
+
+    await recordActivity({
+        actor: req.member._id,
+        action: "member_added_to_team",
+        team: teamId,
+        meta: { memberId: member._id, role: canonicalRole },
+    });
+
     successResponse({
         res,
-        status:200,
-        message:"Member added to team successfully"
-    })
-}
+        status: 200,
+        message: "Member added to team successfully",
+        data: { teamId, memberId: member._id, role: canonicalRole },
+    });
+};
 
-export const removeMemberFromTeam = async(req,res,next)=>{
-    const {teamId,memberId} = req.body
-    const team = await DB_services.findOne({model:teamModel,filter:{_id:teamId}})
-    if(!team){
-        throw new Error("Team not found")
+export const removeMemberFromTeam = async (req, res, next) => {
+    const { teamId, memberId, memberIds } = req.body;
+
+    const team = await DB_services.findOne({ model: teamModel, filter: { _id: teamId } });
+    if (!team) {
+        throw httpError("Team not found", 404, "NOT_FOUND");
     }
-    const member = await DB_services.findOne({model:memberModel,filter:{_id:memberId}})
-    if(!member){
-        throw new Error("Member not found")
+
+    if (!isTeamManager(team, req.member)) {
+        throw httpError("You are not the team admin", 403, "NOT_TEAM_MANAGER");
     }
-    const isMember = await DB_services.findOne({model:teamModel,filter:{_id:teamId,teamMembers:memberId}})
-    if(!isMember){
-        throw new Error("Member not found in team")
+
+    const idsToRemove = Array.isArray(memberIds) && memberIds.length > 0
+        ? memberIds
+        : (memberId ? [memberId] : []);
+
+    if (idsToRemove.length === 0) {
+        throw httpError("At least one memberId is required", 400, "VALIDATION_ERROR");
     }
-    const isTeamAdmin = isTeamManager(team, req.member)
-    if(!isTeamAdmin){
-        throw new Error("You are not the team admin")
+
+    for (const mId of idsToRemove) {
+        if (!mongoose.isValidObjectId(mId)) continue;
+        await DB_services.updateDocument({
+            model: teamModel,
+            filter: { _id: teamId },
+            update: { $pull: { teamMembers: mId, teamAdims: mId } },
+        });
+        await DB_services.updateDocument({
+            model: memberModel,
+            filter: { _id: mId },
+            update: { $pull: { teams: { teamId } } },
+        });
+        await recordActivity({
+            actor: req.member._id,
+            action: "member_removed_from_team",
+            team: teamId,
+            meta: { memberId: mId },
+        });
     }
-    const updateTeam = await DB_services.updateDocument({model:teamModel,filter:{_id:teamId},update:{$pull:{teamMembers:memberId}}})
+
+    successResponse({
+        res,
+        status: 200,
+        message: "Members removed from team successfully",
+        data: { teamId, removedMembers: idsToRemove },
+    });
+};
+
+export const updateMemberRoleInTeam = async (req, res, next) => {
+    const { teamId, memberId, role } = req.body;
+
+    const team = await DB_services.findOne({ model: teamModel, filter: { _id: teamId, deletedAt: null } });
+    if (!team) {
+        throw httpError("Team not found", 404, "NOT_FOUND");
+    }
+
+    const member = await DB_services.findOne({ model: memberModel, filter: { _id: memberId } });
+    if (!member) {
+        throw httpError("Member not found", 404, "USER_NOT_FOUND");
+    }
+
+    const isMember = await DB_services.findOne({
+        model: teamModel,
+        filter: { _id: teamId, teamMembers: memberId },
+    });
+    if (!isMember) {
+        throw httpError("Member not found in team", 404, "USER_NOT_FOUND");
+    }
+
+    if (!isTeamManager(team, req.member)) {
+        throw httpError("You are not the team admin", 403, "NOT_TEAM_MANAGER");
+    }
+
+    const canonicalRole = normalizeTeamRole(role);
+    const asAdmin = canonicalRole === "admin";
+
+    if (asAdmin) {
+        await DB_services.updateDocument({
+            model: teamModel,
+            filter: { _id: teamId },
+            update: { $addToSet: { teamAdims: memberId } },
+        });
+    } else {
+        await DB_services.updateDocument({
+            model: teamModel,
+            filter: { _id: teamId },
+            update: { $pull: { teamAdims: memberId } },
+        });
+    }
+
+    // Update role in member's teams array
+    await memberModel.updateOne(
+        { _id: memberId, "teams.teamId": teamId },
+        { $set: { "teams.$.role": canonicalRole } }
+    );
+
+    await recordActivity({
+        actor: req.member._id,
+        action: "member_role_updated",
+        team: teamId,
+        meta: { memberId, role: canonicalRole },
+    });
+
+    successResponse({
+        res,
+        status: 200,
+        message: "Member role updated successfully",
+        data: { teamId, memberId, role: canonicalRole },
+    });
+};
+
+export const updateTeamName = async (req, res, next) => {
+    const { teamId, name } = req.body;
+
+    const team = await DB_services.findOne({ model: teamModel, filter: { _id: teamId, deletedAt: null } });
+    if (!team) {
+        throw httpError("Team not found", 404, "NOT_FOUND");
+    }
+
+    if (!isTeamManager(team, req.member)) {
+        throw httpError("You are not the team admin", 403, "NOT_TEAM_MANAGER");
+    }
+
+    const updateTeam = await DB_services.updateDocument({
+        model: teamModel,
+        filter: { _id: teamId },
+        update: { $set: { name } },
+        option: { new: true },
+    });
+
+    await recordActivity({
+        actor: req.member._id,
+        action: "team_name_updated",
+        team: teamId,
+        meta: { name },
+    });
+
+    successResponse({
+        res,
+        status: 200,
+        message: "Team name updated successfully",
+        data: updateTeam,
+    });
+};
+
+export const deleteTeam = async (req, res, next) => {
+    const { teamId } = req.body;
+
+    const team = await DB_services.findOne({ model: teamModel, filter: { _id: teamId } });
+    if (!team) {
+        throw httpError("Team not found", 404, "NOT_FOUND");
+    }
+
+    if (!isTeamManager(team, req.member)) {
+        throw httpError("You are not the team admin", 403, "NOT_TEAM_MANAGER");
+    }
+
+    // Section 4.11 & 5.4: Soft delete team (tasks keep team until 30-day purge)
     await DB_services.updateDocument({
-        model:memberModel,
-        filter:{_id:memberId},
-        update:{$pull:{teams:{teamId:teamId}}}
-    })
+        model: teamModel,
+        filter: { _id: teamId },
+        update: { $set: { deletedAt: new Date() } },
+    });
+
+    await recordActivity({
+        actor: req.member._id,
+        action: "team_deleted",
+        team: teamId,
+        meta: { name: team.name },
+    });
+
     successResponse({
         res,
-        status:200,
-        message:"Member removed from team successfully"
-    })
-}
+        status: 200,
+        message: "Team deleted successfully",
+        data: { _id: teamId, deletedAt: new Date() },
+    });
+};
 
-export const updateMemberRoleInTeam = async(req,res,next)=>{
-    const {teamId,memberId,role} = req.body
+export const restoreTeam = async (req, res, next) => {
+    const { teamId } = req.body;
 
-    const team = await DB_services.findOne({model:teamModel,filter:{_id:teamId}})
-    if(!team){
-        throw new Error("Team not found")
+    const team = await teamModel.findOne({ _id: teamId });
+    if (!team) {
+        throw httpError("Team not found", 404, "NOT_FOUND");
     }
-    const member = await DB_services.findOne({model:memberModel,filter:{_id:memberId}})
-    if(!member){
-        throw new Error("Member not found")
+
+    if (!isTeamManager(team, req.member)) {
+        throw httpError("You are not the team admin", 403, "NOT_TEAM_MANAGER");
     }
-    const isMember = await DB_services.findOne({model:teamModel,filter:{_id:teamId,teamMembers:memberId}})
-    if(!isMember){
-        throw new Error("Member not found in team")
+
+    if (!team.deletedAt) {
+        throw httpError("Team is not deleted", 400, "BAD_REQUEST");
     }
-    const isTeamAdmin = isTeamManager(team, req.member)
-    if(!isTeamAdmin){
-        throw new Error("You are not the team admin")
+
+    // Check 30-day restore window
+    const daysSinceDelete = (Date.now() - new Date(team.deletedAt).getTime()) / (1000 * 60 * 60 * 24);
+    if (daysSinceDelete > 30) {
+        throw httpError("Cannot restore team: past 30-day retention window", 400, "RESTORE_WINDOW_EXPIRED");
     }
-    if(role==="admin"){
-        const updateTeam = await DB_services.updateDocument({model:teamModel,filter:{_id:teamId},update:{$addToSet:{teamAdims:memberId}}})
-        await DB_services.updateDocument({
-            model:memberModel,
-            filter:{_id:memberId},
-            update:{$pull:{teams:{teamId:teamId,role:"teamMember"}}}
-        })
-        await DB_services.updateDocument({
-            model:memberModel,
-            filter:{_id:memberId},
-            update:{$push:{teams:{teamId:teamId,role:role}}}
-        })
-    }else{
-        const updateTeam = await DB_services.updateDocument({model:teamModel,filter:{_id:teamId},update:{$pull:{teamAdims:memberId}}})
-        await DB_services.updateDocument({
-            model:memberModel,
-            filter:{_id:memberId},
-            update:{$pull:{teams:{teamId:teamId,role:"teamAdmin"}}}
-        })
-        await DB_services.updateDocument({
-            model:memberModel,
-            filter:{_id:memberId},
-            update:{$push:{teams:{teamId:teamId,role:role}}}
-        })
-    }
+
+    team.deletedAt = null;
+    await team.save();
+
+    await recordActivity({
+        actor: req.member._id,
+        action: "team_restored",
+        team: teamId,
+        meta: { name: team.name },
+    });
+
     successResponse({
         res,
-        status:200,
-        message:"Member role updated successfully"
-    })
-}
-
-export const updateTeamName = async(req,res,next)=>{
-    const {teamId,name} = req.body
-    const team = await DB_services.findOne({model:teamModel,filter:{_id:teamId}})
-    if(!team){
-        throw new Error("Team not found")
-    }
-    const isTeamAdmin = isTeamManager(team, req.member)
-    if(!isTeamAdmin){
-        throw new Error("You are not the team admin")
-    }
-    const updateTeam = await DB_services.updateDocument({model:teamModel,filter:{_id:teamId},update:{$set:{name}}})
-    successResponse({
-        res,
-        status:200,
-        message:"Team name updated successfully"
-    })
-}
-
-
-export const deleteTeam = async(req,res,next)=>{
-    const {teamId} = req.body
-    const team = await DB_services.findOne({model:teamModel,filter:{_id:teamId}})
-    if(!team){
-        throw new Error("Team not found")
-    }
-    if(!isTeamManager(team, req.member)){
-        throw new Error("You are not the team admin")
-    }
-    await DB_services.deleteDocument({model:teamModel,filter:{_id:teamId}})
-    // clean up references so nothing points at a deleted team
-    await memberModel.updateMany({"teams.teamId":teamId},{$pull:{teams:{teamId}}})
-    await taskModel.updateMany({team:teamId},{$set:{team:null}})
-    successResponse({
-        res,
-        status:200,
-        message:"Team deleted successfully"
-    })
-}
+        status: 200,
+        message: "Team restored successfully",
+        data: team,
+    });
+};

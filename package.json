@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "dev": "cross-env NODE_ENV=development nodemon src/index.js",
-    "start": "cross-env NODE_ENV=development node src/index.js"
+    "start": "cross-env NODE_ENV=development node src/index.js",
+    "seed": "node src/DB/seed.js"
   },
   "keywords": [],
   "author": "",

@@ -1,38 +1,50 @@
-import {Router} from "express"
-import { createTeam } from "./team.service.js"
-import { createTeamValidation } from "./team.validation.js"
-import { authonticaation } from "../../commn/middleware/authontication.js"
-import { authorization } from "../../commn/middleware/authorization.js"
-import { RoleEnum } from "../../commn/enums/member.enums.js"
+import { Router } from "express";
 import {
+    createTeam,
+    getAllTeams,
+    getTeamById,
+    getTeamActivity,
     addMemberToTeam,
     removeMemberFromTeam,
     updateMemberRoleInTeam,
     updateTeamName,
     deleteTeam,
-    getAllTeams
-} from "./team.service.js"
+    restoreTeam,
+} from "./team.service.js";
 import {
+    createTeamValidation,
     addMemberToTeamValidation,
     removeMemberFromTeamValidation,
     updateMemberRoleInTeamValidation,
     updateTeamNameValidation,
-    deleteTeamValidation
-} from "./team.validation.js"
-import { validation } from "../../commn/middleware/validation.js"
+    deleteTeamValidation,
+    restoreTeamValidation,
+} from "./team.validation.js";
+import { authonticaation } from "../../commn/middleware/authontication.js";
+import { authorization } from "../../commn/middleware/authorization.js";
+import { RoleEnum } from "../../commn/enums/member.enums.js";
+import { validation } from "../../commn/middleware/validation.js";
 
+const teamRouter = Router();
 
+teamRouter.get("/", authonticaation, getAllTeams);
+teamRouter.get("/all", authonticaation, getAllTeams);
+teamRouter.post(
+    "/createTeam",
+    authonticaation,
+    authorization([RoleEnum.ADMIN]),
+    validation(createTeamValidation),
+    createTeam
+);
+teamRouter.post("/addMemberToTeam", authonticaation, validation(addMemberToTeamValidation), addMemberToTeam);
+teamRouter.post("/removeMemberFromTeam", authonticaation, validation(removeMemberFromTeamValidation), removeMemberFromTeam);
+teamRouter.post("/updateMemberRoleInTeam", authonticaation, validation(updateMemberRoleInTeamValidation), updateMemberRoleInTeam);
+teamRouter.post("/updateTeamName", authonticaation, validation(updateTeamNameValidation), updateTeamName);
+teamRouter.post("/deleteTeam", authonticaation, validation(deleteTeamValidation), deleteTeam);
+teamRouter.post("/restore", authonticaation, validation(restoreTeamValidation), restoreTeam);
 
-const teamRouter=Router()
+// Parameterized team routes
+teamRouter.get("/:id", authonticaation, getTeamById);
+teamRouter.get("/:id/activity", authonticaation, getTeamActivity);
 
-teamRouter.get("/", authonticaation, getAllTeams)
-teamRouter.get("/all", authonticaation, getAllTeams)
-teamRouter.post("/createTeam",authonticaation,authorization([RoleEnum.ADMIN]),validation(createTeamValidation),createTeam)
-teamRouter.post("/addMemberToTeam",authonticaation,validation(addMemberToTeamValidation),addMemberToTeam)
-teamRouter.post("/removeMemberFromTeam",authonticaation,validation(removeMemberFromTeamValidation),removeMemberFromTeam)
-teamRouter.post("/updateMemberRoleInTeam",authonticaation,validation(updateMemberRoleInTeamValidation),updateMemberRoleInTeam)
-teamRouter.post("/updateTeamName",authonticaation,validation(updateTeamNameValidation),updateTeamName)
-teamRouter.post("/deleteTeam",authonticaation,validation(deleteTeamValidation),deleteTeam)
-
-
-export default teamRouter
+export default teamRouter;

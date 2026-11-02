@@ -8,6 +8,9 @@ export const revoke_key=({userId,jti})=>{
 export const get_revoke_key = ({ userId }) => {
     return `revoked_token::${userId}::`
 }
+export const recent_refresh_key = ({ userId, jti }) => {
+    return `recent_refresh::${userId}::${jti}`
+}
 export const otp_key=({email})=>{
     return `otp::${email}`
 }

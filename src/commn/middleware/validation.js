@@ -20,8 +20,9 @@ export const validation = (schema) => {
         }
 
         if (errors.length > 0) {
-            return res.status(400).json({
+            return res.status(422).json({
                 message: "Validation Error",
+                code: "VALIDATION_ERROR",
                 errors,
             });
         }

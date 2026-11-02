@@ -10,59 +10,90 @@ import { revoke_key } from "../../DB/redis/redise.service.js";
 export const authonticaation = async (req, res, next) => {
     try {
         const { authorization } = req.headers;
+        let token = "";
 
-        if (!authorization) {
-            throw new Error("Authorization token is required");
+        if (authorization) {
+            const [prefix, rawToken] = authorization.split(" ");
+            if (prefix === "Bearer" && rawToken) {
+                token = rawToken;
+            }
         }
 
-        const [prefix, token] = authorization.split(" ");
-
-        if (prefix !== "Bearer" || !token) {
-            throw new Error("Invalid authorization format");
+        // Support query param ?access_token= for SSE / EventSource
+        if (!token && req.query?.access_token) {
+            token = req.query.access_token;
         }
 
-        const decoded = verifyToken({
-            token,
-            secret_key: JWT_SECRET,
-        });
+        if (!token) {
+            return res.status(401).json({
+                message: "Authorization token is required",
+                code: "UNAUTHORIZED",
+            });
+        }
+
+        let decoded;
+        try {
+            decoded = verifyToken({
+                token,
+                secret_key: JWT_SECRET,
+            });
+        } catch (err) {
+            return res.status(401).json({
+                message: err.name === "TokenExpiredError" ? "Token expired" : "Invalid token",
+                code: err.name === "TokenExpiredError" ? "TOKEN_EXPIRED" : "INVALID_TOKEN",
+            });
+        }
 
         if (!decoded?.id || !decoded?.iat || !decoded?.jti) {
-            throw new Error("Invalid token payload");
+            return res.status(401).json({
+                message: "Invalid token payload",
+                code: "INVALID_TOKEN",
+            });
         }
 
+        // Fix B3: do not restrict provider to SYSTEM so Google users work on protected routes
         const member = await findOne({
             model: memberModel,
             filter: {
                 _id: decoded.id,
-                provider: ProviderEnum.SYSTEM,
             },
             select: "-password",
         });
 
         if (!member) {
-            throw new Error("Member not found. Please sign up.");
+            return res.status(401).json({
+                message: "Member not found. Please sign up.",
+                code: "USER_NOT_FOUND",
+            });
         }
 
-const credentialsChangedAt = member.changeCredentials;
+        const credentialsChangedAt = member.changeCredentials;
+        if (
+            credentialsChangedAt &&
+            credentialsChangedAt.getTime() > decoded.iat * 1000
+        ) {
+            return res.status(401).json({
+                message: "Token expired due to credential changes. Please log in again.",
+                code: "TOKEN_EXPIRED",
+            });
+        }
 
-if (
-    credentialsChangedAt &&
-    credentialsChangedAt.getTime() > decoded.iat * 1000
-) {
-    throw new Error(
-        "Token expired due to credential changes. Please log in again."
-    );
-}
+        try {
+            const revokeToken = await getValuse({
+                key: revoke_key({
+                    memberId: member._id,
+                    jti: decoded.jti,
+                }),
+            });
 
-        const revokeToken = await getValuse({
-            key: revoke_key({
-                memberId: member._id,
-                jti: decoded.jti,
-            }),
-        });
-
-        if (revokeToken) {
-            throw new Error("Token revoked. Please log in again.");
+            if (revokeToken) {
+                return res.status(401).json({
+                    message: "Token revoked. Please log in again.",
+                    code: "TOKEN_REVOKED",
+                });
+            }
+        } catch (e) {
+            // Redis error should not block auth if unreachable
         }
 
         req.decoded = decoded;
@@ -70,13 +101,15 @@ if (
 
         return next();
     } catch (error) {
-      console.error("Authentication Error:", error);
-
-    return res.status(401).json({
-        message: error.message || "Authentication failed",
-    });
+        return res.status(401).json({
+            message: error.message || "Authentication failed",
+            code: "UNAUTHORIZED",
+        });
     }
 };
+
+export const authentication = authonticaation;
+
 
 
 

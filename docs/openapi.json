@@ -1,0 +1,283 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "TaskVerse API",
+    "version": "1.0.0",
+    "description": "Complete REST API specification for TaskVerse backend"
+  },
+  "servers": [
+    {
+      "url": "https://taskverse-backend.vercel.app",
+      "description": "Production Server"
+    },
+    {
+      "url": "http://localhost:3000",
+      "description": "Local Development Server"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "message": { "type": "string" },
+          "code": { "type": "string" },
+          "errors": { "type": "array", "items": { "type": "object" } }
+        },
+        "required": ["message", "code"]
+      },
+      "SuccessEnvelope": {
+        "type": "object",
+        "properties": {
+          "message": { "type": "string" },
+          "data": { "type": "object" },
+          "meta": { "type": "object" }
+        },
+        "required": ["message", "data"]
+      }
+    }
+  },
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ],
+  "paths": {
+    "/auth/signIn": {
+      "post": {
+        "summary": "Sign in with email and password",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": { "type": "string", "format": "email" },
+                  "password": { "type": "string" }
+                },
+                "required": ["email", "password"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Login successful" },
+          "401": { "description": "Invalid credentials" },
+          "403": { "description": "Email not confirmed (code: EMAIL_NOT_CONFIRMED)" },
+          "404": { "description": "User not found (code: USER_NOT_FOUND)" }
+        }
+      }
+    },
+    "/auth/refreshToken": {
+      "post": {
+        "summary": "Refresh access and refresh token pair (idempotent within 10s)",
+        "responses": {
+          "200": { "description": "Tokens refreshed" },
+          "401": { "description": "Invalid or revoked refresh token" }
+        }
+      }
+    },
+    "/auth/sessions": {
+      "get": {
+        "summary": "Get all active login sessions for authenticated user",
+        "responses": {
+          "200": { "description": "Active session list" }
+        }
+      }
+    },
+    "/member": {
+      "get": {
+        "summary": "Get all members with populated teams [{ teamId, name, role }]",
+        "responses": {
+          "200": { "description": "Members array" }
+        }
+      }
+    },
+    "/member/createMember": {
+      "post": {
+        "summary": "Admin creates a new member and sends invitation email",
+        "responses": {
+          "201": { "description": "Member created" },
+          "403": { "description": "Forbidden for non-admins" }
+        }
+      }
+    },
+    "/member/{id}": {
+      "patch": {
+        "summary": "Update member profile (self or admin)",
+        "responses": {
+          "200": { "description": "Member updated" }
+        }
+      },
+      "delete": {
+        "summary": "Delete member (admin only; unassigns tasks, removes from teams)",
+        "responses": {
+          "200": { "description": "Member deleted" }
+        }
+      }
+    },
+    "/team": {
+      "get": {
+        "summary": "Get all accessible teams for current user",
+        "responses": {
+          "200": { "description": "Teams list" }
+        }
+      }
+    },
+    "/team/createTeam": {
+      "post": {
+        "summary": "Create a team (admin only)",
+        "responses": {
+          "201": { "description": "Team created" }
+        }
+      }
+    },
+    "/team/{id}": {
+      "get": {
+        "summary": "Get team details with members, roles, and task counts",
+        "responses": {
+          "200": { "description": "Team details" }
+        }
+      }
+    },
+    "/task": {
+      "get": {
+        "summary": "Get tasks with filters, counts, assignees, and derived status",
+        "parameters": [
+          { "name": "team", "in": "query", "schema": { "type": "string" } },
+          { "name": "assignee", "in": "query", "schema": { "type": "string" } },
+          { "name": "status", "in": "query", "schema": { "type": "string" } },
+          { "name": "priority", "in": "query", "schema": { "type": "string" } },
+          { "name": "tag", "in": "query", "schema": { "type": "string" } },
+          { "name": "archived", "in": "query", "schema": { "type": "boolean" } },
+          { "name": "due", "in": "query", "schema": { "type": "string", "enum": ["overdue", "today", "week"] } },
+          { "name": "q", "in": "query", "schema": { "type": "string" } },
+          { "name": "page", "in": "query", "schema": { "type": "integer" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "Tasks list with meta" }
+        }
+      }
+    },
+    "/task/createTask": {
+      "post": {
+        "summary": "Create a task with assignees and subtasks atomically",
+        "responses": {
+          "201": { "description": "Task created" },
+          "403": { "description": "Forbidden for viewers (VIEWER_READ_ONLY)" }
+        }
+      }
+    },
+    "/task/{taskId}": {
+      "get": {
+        "summary": "Get full task details with comments, attachments, time, subtasks",
+        "responses": {
+          "200": { "description": "Full task details" }
+        }
+      },
+      "patch": {
+        "summary": "Update task fields (concurrency-safe with If-Unmodified-Since)",
+        "responses": {
+          "200": { "description": "Task updated" },
+          "409": { "description": "Conflict if document modified" }
+        }
+      },
+      "delete": {
+        "summary": "Soft delete task (retains for 30 days)",
+        "responses": {
+          "200": { "description": "Task soft deleted" }
+        }
+      }
+    },
+    "/task/{taskId}/restore": {
+      "post": {
+        "summary": "Restore soft-deleted task within 30 days",
+        "responses": {
+          "200": { "description": "Task restored" }
+        }
+      }
+    },
+    "/taskAssignment/taskStatusByMember": {
+      "patch": {
+        "summary": "Assignee updates their task status (viewers get 403 VIEWER_READ_ONLY)",
+        "responses": {
+          "200": { "description": "Status updated and derived task status computed" },
+          "403": { "description": "VIEWER_READ_ONLY for team viewers" }
+        }
+      }
+    },
+    "/task/{taskId}/comments": {
+      "get": { "summary": "Get comments for a task" },
+      "post": {
+        "summary": "Create comment with @FirstLast handle mention resolution",
+        "responses": {
+          "201": { "description": "Comment created" },
+          "403": { "description": "VIEWER_READ_ONLY for team viewers" }
+        }
+      }
+    },
+    "/task/{taskId}/attachments": {
+      "get": { "summary": "Get attachments for a task" },
+      "post": {
+        "summary": "Upload attachment (max 10MB, max 20 per task)",
+        "responses": {
+          "201": { "description": "Attachment uploaded" },
+          "403": { "description": "VIEWER_READ_ONLY for team viewers" }
+        }
+      }
+    },
+    "/task/{taskId}/time": {
+      "get": { "summary": "Get time entries for a task" },
+      "post": {
+        "summary": "Log time on a task",
+        "responses": {
+          "201": { "description": "Time logged" },
+          "403": { "description": "VIEWER_READ_ONLY for team viewers" }
+        }
+      }
+    },
+    "/dashboard": {
+      "get": {
+        "summary": "Get overview dashboard with totals, burndown, byStatus, byTeam, byMember",
+        "responses": {
+          "200": { "description": "Dashboard data" }
+        }
+      }
+    },
+    "/changes": {
+      "get": {
+        "summary": "Polling delta endpoint returning upserted and deleted IDs since ISO timestamp",
+        "responses": {
+          "200": { "description": "Delta changes object" }
+        }
+      }
+    },
+    "/events": {
+      "get": {
+        "summary": "Realtime SSE connection with 25s heartbeat and Last-Event-ID replay",
+        "responses": {
+          "200": { "description": "SSE text/event-stream" }
+        }
+      }
+    },
+    "/public/task/{token}": {
+      "get": {
+        "summary": "Public read-only task view without member emails",
+        "security": [],
+        "responses": {
+          "200": { "description": "Public task data" }
+        }
+      }
+    }
+  }
+}
