@@ -25,7 +25,6 @@ export const isSystemAdmin = (member) => member?.role === "admin";
 // Resolve a member's effective role in a team: 'admin' | 'editor' | 'viewer' | null
 export const getMemberTeamRole = (team, member) => {
     if (!team || !member) return null;
-    if (isSystemAdmin(member)) return "admin";
     if (same(team.addedBy, member._id)) return "admin";
     if ((team.teamAdims || []).some((a) => same(a, member._id))) return "admin";
     if ((team.teamAdmins || []).some((a) => same(a, member._id))) return "admin";
@@ -43,10 +42,9 @@ export const getMemberTeamRole = (team, member) => {
     return null;
 };
 
-// Owner/admin of a team (or a system admin)
+// Owner/admin of a team
 export const isTeamManager = (team, member) => {
     if (!team || !member) return false;
-    if (isSystemAdmin(member)) return true;
     if (same(team.addedBy, member._id)) return true;
     if ((team.teamAdims || []).some((a) => same(a, member._id))) return true;
     if ((team.teamAdmins || []).some((a) => same(a, member._id))) return true;
@@ -57,7 +55,6 @@ export const isTeamManager = (team, member) => {
 // Check if member is strictly a viewer in the team (and not an admin / team manager)
 export const isViewerInTeam = (team, member) => {
     if (!team || !member) return false;
-    if (isSystemAdmin(member)) return false;
     if (isTeamManager(team, member)) return false;
     const role = getMemberTeamRole(team, member);
     return role === "viewer";
@@ -70,25 +67,23 @@ export const assertNotViewer = (team, member) => {
     }
 };
 
-// Can create a task in a team: SA, TMgr, or Editor in that team (viewers cannot)
+// Can create a task in a team: TMgr or Editor in that team (viewers cannot)
 export const canCreateTask = (member, team) => {
     if (!member) return false;
-    if (isSystemAdmin(member)) return true;
     if (!team) return true; // Tasks without team
     if (isTeamManager(team, member)) return true;
     const role = getMemberTeamRole(team, member);
     return role === "editor";
 };
 
-// Can edit/delete/archive/assign/share a task: SA, TCr, or TMgr
+// Can edit/delete/archive/assign/share a task: task creator or team manager
 export const canManageTask = (member, task, team) => {
     if (!member) return false;
-    if (isSystemAdmin(member)) return true;
     if (same(task?.createdBy, member._id)) return true;
     return isTeamManager(team, member);
 };
 
-// Can view a task (system admin, task manager, team member/editor/viewer, or assigned member, or creator)
+// Can view a task: creator, team member, or assigned member
 export const canViewTask = (member, task, team = null, isAssigned = false) => {
     if (!member || !task) return false;
     if (canManageTask(member, task, team)) return true;

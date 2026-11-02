@@ -3,6 +3,7 @@ import { hashSync } from "bcrypt";
 import dotenv from "dotenv";
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 // Load configuration
 const env = process.env.NODE_ENV || "development";
@@ -297,7 +298,7 @@ export const seedDatabase = async () => {
     await mongoose.disconnect();
 };
 
-if (import.meta.url === `file:///${process.argv[1].replace(/\\/g, "/")}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
     seedDatabase().catch((err) => {
         console.error("Seeding failed:", err);
         process.exit(1);

@@ -1,8 +1,6 @@
 import notificationModel from "../../DB/models/notification.js";
 import memberModel from "../../DB/models/member.js";
 import { sendEmail } from "../email/send.email.js";
-import emailEventEmitter from "../email/email.events.js";
-import { eventsEnum } from "../enums/eventsEnum.js";
 
 export const createNotification = async ({
     user,

@@ -19,8 +19,7 @@ import cronRouter from "./modules/cron/cron.controller.js";
 import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
 import cors from "cors";
-import { flushEmails } from "./commn/email/email.events.js";
-import { getSmtpStatus } from "./commn/email/send.email.js";
+import { getEmailStatus } from "./commn/email/send.email.js";
 
 const app = express();
 const port = PORT || 3000;
@@ -28,37 +27,6 @@ let initPromise = null;
 
 // Proxy trust for real IP behind proxies (Vercel, AWS, Nginx)
 app.set("trust proxy", 1);
-
-// Serverless safety middleware: Flush any pending background emails BEFORE
-// the response headers/body are sent to the client. This guarantees Vercel
-// does not freeze or terminate the process before Nodemailer finishes.
-app.use((req, res, next) => {
-    const originalJson = res.json.bind(res);
-    const originalSend = res.send.bind(res);
-    let flushed = false;
-
-    const flushBeforeRespond = async (caller, data) => {
-        if (!flushed) {
-            flushed = true;
-            try {
-                await flushEmails();
-            } catch (err) {
-                console.error("Error flushing emails in serverless middleware:", err?.message || err);
-            }
-        }
-        return caller(data);
-    };
-
-    res.json = function (data) {
-        flushBeforeRespond(originalJson, data);
-    };
-
-    res.send = function (data) {
-        flushBeforeRespond(originalSend, data);
-    };
-
-    next();
-});
 
 // Helper to extract user ID from JWT if present in Authorization header
 const getUserIdFromReq = (req) => {
@@ -110,18 +78,20 @@ const authLimiter = rateLimit({
 
 // Section 2.8 CORS: explicit origin list from env, never '*' when credentials: true
 const rawOrigins = process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || "";
-const allowedOrigins = rawOrigins
+const configuredOrigins = rawOrigins
     .split(",")
     .map((o) => o.trim().replace(/\/$/, ""))
     .filter((o) => o && o !== "*");
+const allowedOrigins = configuredOrigins.length > 0
+    ? configuredOrigins
+    : process.env.NODE_ENV === "production"
+        ? []
+        : ["http://localhost:5173", "http://localhost:5180"];
 
 app.use(
     cors({
         origin: (origin, callback) => {
             if (!origin) return callback(null, true);
-            if (allowedOrigins.length === 0) {
-                return callback(null, origin);
-            }
             if (allowedOrigins.includes(origin)) {
                 return callback(null, origin);
             }
@@ -153,14 +123,10 @@ app.get("/api", (req, res) => {
     res.json({ message: "TaskVerse API is running", status: "healthy" });
 });
 
-// SMTP diagnostic endpoint to verify email connectivity on Vercel
-app.get(["/public/smtp-status", "/api/public/smtp-status"], async (req, res) => {
-    try {
-        const status = await getSmtpStatus();
-        res.status(status.ok ? 200 : 503).json(status);
-    } catch (err) {
-        res.status(500).json({ ok: false, error: err.message });
-    }
+// Email provider diagnostic endpoint (keeps the old SMTP path as an alias).
+app.get(["/public/email-status", "/api/public/email-status", "/public/smtp-status", "/api/public/smtp-status"], (req, res) => {
+    const status = getEmailStatus();
+    res.status(status.ok ? 200 : 503).json(status);
 });
 
 // Public endpoints (no auth)

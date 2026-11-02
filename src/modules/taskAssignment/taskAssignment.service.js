@@ -12,7 +12,6 @@ import {
     canManageTask,
     assertNotViewer,
     isTeamManager,
-    isSystemAdmin,
     same,
 } from "../../commn/utils/permissions.js";
 import { recordActivity } from "../../commn/utils/activity.service.js";
@@ -106,23 +105,26 @@ export const addMemberToTask = async (req, res, next) => {
     }
 
     // Helper to check if a member is in the task's team
-    const isMemberOfTeam = (targetMemberId) => {
-        if (!team) return true; // Tasks without team can be assigned to anyone
-        if (same(team.addedBy, targetMemberId)) return true;
-        if ((team.teamAdims || []).some((a) => same(a, targetMemberId))) return true;
-        if ((team.teamMembers || []).some((m) => same(m, targetMemberId))) return true;
-        return false;
+    const isEligibleAssignee = (targetMember) => {
+        if (!targetMember) return false;
+        if (!team) {
+            // A standalone task may be assigned to its creator or to a member
+            // managed by the same admin; never expose another admin's users.
+            return same(targetMember._id, req.member._id) || same(targetMember.addedBy, req.member._id);
+        }
+        return same(team.addedBy, targetMember._id) ||
+            (team.teamAdims || []).some((a) => same(a, targetMember._id)) ||
+            (team.teamMembers || []).some((m) => same(m, targetMember._id));
     };
 
     // Single mode: returns 409 ALREADY_ASSIGNED
     if (!memberIds && memberId) {
-        if (!isMemberOfTeam(memberId)) {
-            throw httpError("Assignee must be a member of the task's team", 400, "NOT_TEAM_MEMBER");
-        }
-
         const member = await DB_services.findOne({ model: memberModel, filter: { _id: memberId } });
         if (!member) {
             throw httpError("Member not found", 404, "USER_NOT_FOUND");
+        }
+        if (!isEligibleAssignee(member)) {
+            throw httpError("Assignee must belong to the task's team or be managed by you", 400, "NOT_TEAM_MEMBER");
         }
 
         const already = await DB_services.findOne({
@@ -192,14 +194,13 @@ export const addMemberToTask = async (req, res, next) => {
             continue;
         }
 
-        if (!isMemberOfTeam(mId)) {
-            skipped.push({ id: mId, code: "NOT_TEAM_MEMBER" });
-            continue;
-        }
-
         const member = await DB_services.findOne({ model: memberModel, filter: { _id: mId } });
         if (!member) {
             skipped.push({ id: mId, code: "USER_NOT_FOUND" });
+            continue;
+        }
+        if (!isEligibleAssignee(member)) {
+            skipped.push({ id: mId, code: "NOT_TEAM_MEMBER" });
             continue;
         }
 
@@ -472,9 +473,25 @@ export const bulkStatus = async (req, res, next) => {
 };
 
 export const getAllAssignments = async (req, res, next) => {
-    const filter = isSystemAdmin(req.member) ? {} : { member: req.member._id };
+    const userTeams = await teamModel.find({
+        deletedAt: null,
+        $or: [
+            { teamMembers: req.member._id },
+            { teamAdims: req.member._id },
+            { addedBy: req.member._id },
+        ],
+    }).distinct("_id");
+    const visibleTaskIds = await taskModel.find({
+        deletedAt: null,
+        $or: [
+            { createdBy: req.member._id },
+            { team: { $in: userTeams } },
+        ],
+    }).distinct("_id");
+    const assignedTaskIds = await taskAssignmentModel.find({ member: req.member._id }).distinct("task");
+    const taskIds = [...new Set([...visibleTaskIds.map(String), ...assignedTaskIds.map(String)])];
     const assignments = await taskAssignmentModel
-        .find(filter)
+        .find({ task: { $in: taskIds } })
         .populate({ path: "task", populate: { path: "team", select: "name" } })
         .populate("member", "fname lname email profilePicture")
         .sort({ assignedAt: -1 });

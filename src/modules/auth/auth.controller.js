@@ -27,7 +27,7 @@ import {
     sendResetPasswordOtpValidation,
     signInValidation,
 } from "./auth.validation.js";
-import { authonticaation } from "../../commn/middleware/authontication.js";
+import { authonticaation, refreshAuthentication } from "../../commn/middleware/authontication.js";
 
 const authRouter = new Router();
 
@@ -50,7 +50,7 @@ authRouter.post("/signIn", validation(signInValidation), signIn);
 authRouter.post("/logout", authonticaation, logout);
 authRouter.post("/profile", authonticaation, getProfile);
 authRouter.get("/profile", authonticaation, getProfile);
-authRouter.post("/refreshToken", authonticaation, refreshToken);
+authRouter.post("/refreshToken", refreshAuthentication, refreshToken);
 authRouter.post("/forgotPassword", validation(sendResetPasswordOtpValidation), forgetPassword);
 authRouter.post("/resetPassword", validation(resetPasswordValidation), resetPassword);
 authRouter.post("/changePassword", authonticaation, validation(changePasswordValidation), changePassword);

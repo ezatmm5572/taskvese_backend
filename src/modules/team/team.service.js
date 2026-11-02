@@ -45,15 +45,11 @@ export const createTeam = async (req, res, next) => {
 export const getAllTeams = async (req, res, next) => {
     const filter = {
         deletedAt: null,
-        ...(req.member.role === "admin"
-            ? {}
-            : {
-                  $or: [
-                      { teamMembers: req.member._id },
-                      { addedBy: req.member._id },
-                      { teamAdims: req.member._id },
-                  ],
-              }),
+        $or: [
+            { teamMembers: req.member._id },
+            { addedBy: req.member._id },
+            { teamAdims: req.member._id },
+        ],
     };
 
     const teams = await teamModel
@@ -82,6 +78,10 @@ export const getTeamById = async (req, res, next) => {
     if (!team) {
         throw httpError("Team not found", 404, "NOT_FOUND");
     }
+    const canViewTeam = String(team.addedBy) === String(req.member._id) ||
+        (team.teamAdims || []).some((id) => String(id) === String(req.member._id)) ||
+        (team.teamMembers || []).some((id) => String(id) === String(req.member._id));
+    if (!canViewTeam) throw httpError("You are not a member of this team", 403, "FORBIDDEN");
 
     // Get task counts for this team
     const totalTasks = await taskModel.countDocuments({ team: id, deletedAt: null });
@@ -138,6 +138,10 @@ export const getTeamActivity = async (req, res, next) => {
     if (!team) {
         throw httpError("Team not found", 404, "NOT_FOUND");
     }
+    const canViewTeam = String(team.addedBy) === String(req.member._id) ||
+        (team.teamAdims || []).some((id) => String(id) === String(req.member._id)) ||
+        (team.teamMembers || []).some((id) => String(id) === String(req.member._id));
+    if (!canViewTeam) throw httpError("You are not a member of this team", 403, "FORBIDDEN");
 
     const activities = await activityModel
         .find({ team: id })

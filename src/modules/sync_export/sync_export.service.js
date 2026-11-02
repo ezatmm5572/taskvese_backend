@@ -5,7 +5,7 @@ import taskAssignmentModel from "../../DB/models/taskAssignment.js";
 import commentModel from "../../DB/models/comment.js";
 import timeEntryModel from "../../DB/models/timeEntry.js";
 import { successResponse } from "../../commn/utils/successResponse.js";
-import { isSystemAdmin, same } from "../../commn/utils/permissions.js";
+
 import { deriveTaskStatus } from "../taskAssignment/taskAssignment.service.js";
 import { normalizeTaskStatus } from "../../commn/enums/task.enums.js";
 
@@ -116,7 +116,7 @@ export const exportTasksCsv = async (req, res, next) => {
     if (tag) query.tags = tag.toLowerCase();
 
     // Access scoping
-    if (!isSystemAdmin(req.member)) {
+    {
         const userTeams = await teamModel
             .find({
                 deletedAt: null,

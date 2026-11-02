@@ -7,7 +7,7 @@ import { getValuse } from "../../DB/redis/redise.service.js";
 import { JWT_SECRET } from "../../../config/config.env.js";
 import { revoke_key } from "../../DB/redis/redise.service.js";
 
-export const authonticaation = async (req, res, next) => {
+const authenticate = (expectedType = "access") => async (req, res, next) => {
     try {
         const { authorization } = req.headers;
         let token = "";
@@ -44,9 +44,9 @@ export const authonticaation = async (req, res, next) => {
             });
         }
 
-        if (!decoded?.id || !decoded?.iat || !decoded?.jti) {
+        if (!decoded?.id || !decoded?.iat || !decoded?.jti || decoded.type !== expectedType) {
             return res.status(401).json({
-                message: "Invalid token payload",
+                message: `A valid ${expectedType} token is required`,
                 code: "INVALID_TOKEN",
             });
         }
@@ -64,6 +64,12 @@ export const authonticaation = async (req, res, next) => {
             return res.status(401).json({
                 message: "Member not found. Please sign up.",
                 code: "USER_NOT_FOUND",
+            });
+        }
+        if (member.active === false) {
+            return res.status(403).json({
+                message: "Account is deactivated. Contact an administrator.",
+                code: "ACCOUNT_DEACTIVATED",
             });
         }
 
@@ -108,6 +114,8 @@ export const authonticaation = async (req, res, next) => {
     }
 };
 
+export const authonticaation = authenticate("access");
+export const refreshAuthentication = authenticate("refresh");
 export const authentication = authonticaation;
 
 

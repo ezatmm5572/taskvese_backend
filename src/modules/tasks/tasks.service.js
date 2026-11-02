@@ -16,7 +16,6 @@ import {
     isViewerInTeam,
     assertNotViewer,
     same,
-    isSystemAdmin,
     isTeamManager,
 } from "../../commn/utils/permissions.js";
 import { successResponse } from "../../commn/utils/successResponse.js";
@@ -37,7 +36,6 @@ import crypto from "crypto";
 // Check if caller has Task Access (TA)
 export const checkCanAccessTask = async (member, task, team = null) => {
     if (!member || !task) return false;
-    if (isSystemAdmin(member)) return true;
     if (same(task.createdBy, member._id)) return true;
 
     if (!team && task.team) {
@@ -307,31 +305,28 @@ export const getAllTasks = async (req, res, next) => {
         }
     }
 
-    // Task Access scoping: unless SA, only return tasks user has access to
-    if (!isSystemAdmin(req.member)) {
-        // Find teams caller belongs to
-        const userTeams = await teamModel
-            .find({
-                deletedAt: null,
-                $or: [
-                    { teamMembers: req.member._id },
-                    { teamAdims: req.member._id },
-                    { addedBy: req.member._id },
-                ],
-            })
-            .distinct("_id");
+    // Tenant/access scoping applies to admins too: each admin sees their own tasks,
+    // tasks in teams they belong to, and tasks explicitly assigned to them.
+    const userTeams = await teamModel
+        .find({
+            deletedAt: null,
+            $or: [
+                { teamMembers: req.member._id },
+                { teamAdims: req.member._id },
+                { addedBy: req.member._id },
+            ],
+        })
+        .distinct("_id");
 
-        // Find tasks user is assigned to
-        const assignedTaskIds = await taskAssignmentModel
-            .find({ member: req.member._id })
-            .distinct("task");
+    const assignedTaskIds = await taskAssignmentModel
+        .find({ member: req.member._id })
+        .distinct("task");
 
-        query.$or = [
-            { createdBy: req.member._id },
-            { team: { $in: userTeams } },
-            { _id: { $in: assignedTaskIds } },
-        ];
-    }
+    query.$or = [
+        { createdBy: req.member._id },
+        { team: { $in: userTeams } },
+        { _id: { $in: assignedTaskIds } },
+    ];
 
     // Assignee filter
     if (assignee) {

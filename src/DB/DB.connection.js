@@ -6,8 +6,7 @@ export const connectDB = async () => {
         return;
     }
     if (!DBURI) {
-        console.warn("DB_URI environment variable is missing.");
-        return;
+        throw new Error("DB_URI environment variable is missing. Configure it in the deployment environment.");
     }
     try {
         await mongoose.connect(`${DBURI}`, { serverSelectionTimeoutMS: 5000, connectTimeoutMS: 5000 });

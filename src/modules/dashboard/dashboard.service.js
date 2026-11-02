@@ -4,7 +4,7 @@ import memberModel from "../../DB/models/member.js";
 import taskAssignmentModel from "../../DB/models/taskAssignment.js";
 import timeEntryModel from "../../DB/models/timeEntry.js";
 import { successResponse } from "../../commn/utils/successResponse.js";
-import { isSystemAdmin, same } from "../../commn/utils/permissions.js";
+
 import { TaskStatusEnum, normalizeTaskStatus } from "../../commn/enums/task.enums.js";
 
 export const getDashboardOverview = async (req, res, next) => {
@@ -16,7 +16,7 @@ export const getDashboardOverview = async (req, res, next) => {
     }
 
     // Task access scoping
-    if (!isSystemAdmin(req.member)) {
+    {
         const userTeams = await teamModel
             .find({
                 deletedAt: null,

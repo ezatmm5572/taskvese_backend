@@ -3,12 +3,10 @@ import * as DB_services from "../../DB/DB.service.js";
 import memberModel from "../../DB/models/member.js";
 import teamModel from "../../DB/models/team.js";
 import taskAssignmentModel from "../../DB/models/taskAssignment.js";
-import emailEventEmitter from "../../commn/email/email.events.js";
 import { hashSync } from "bcrypt";
 import { sendEmail } from "../../commn/email/send.email.js";
 import { RoleEnum } from "../../commn/enums/member.enums.js";
 import { fileUpload } from "../../commn/utils/fileUpload.js";
-import { eventsEnum } from "../../commn/enums/eventsEnum.js";
 import { successResponse } from "../../commn/utils/successResponse.js";
 import { signInInvitationTemplate } from "../../commn/email/signin_invetion_tamplate.js";
 import {
@@ -111,8 +109,11 @@ export const getProfile = async (req, res, next) => {
 
 export const getAllMembers = async (req, res, next) => {
     // Section 2.10 Contract Fix: GET /member MUST include each member's teams: [{ teamId, name, role }]
+    const memberFilter = isSystemAdmin(req.member)
+        ? { $or: [{ _id: req.member._id }, { addedBy: req.member._id }] }
+        : { teams: { $elemMatch: { teamId: { $in: (req.member.teams || []).map((t) => t.teamId) } } } };
     const members = await memberModel
-        .find({})
+        .find(memberFilter)
         .populate("teams.teamId", "name")
         .select("-password")
         .sort({ createdAt: -1 });
@@ -151,7 +152,7 @@ export const updateMember = async (req, res, next) => {
     }
 
     const member = await memberModel.findById(id);
-    if (!member) {
+    if (!member || (isSA && !isSelf && String(member.addedBy || "") !== String(req.member._id))) {
         throw httpError("Member not found", 404, "USER_NOT_FOUND");
     }
 
@@ -202,7 +203,7 @@ export const deleteMember = async (req, res, next) => {
     }
 
     const memberToDelete = await memberModel.findById(id);
-    if (!memberToDelete) {
+    if (!memberToDelete || String(memberToDelete.addedBy || "") !== String(req.member._id)) {
         throw httpError("Member not found", 404, "USER_NOT_FOUND");
     }
 
@@ -244,7 +245,7 @@ export const resetMemberPassword = async (req, res, next) => {
 
     const { id } = req.params;
     const member = await memberModel.findById(id);
-    if (!member) {
+    if (!member || String(member.addedBy || "") !== String(req.member._id)) {
         throw httpError("Member not found", 404, "USER_NOT_FOUND");
     }
 
@@ -284,9 +285,13 @@ export const setMemberActive = async (req, res, next) => {
         throw httpError("You cannot deactivate your own account", 400, "BAD_REQUEST");
     }
 
+    const memberToUpdate = await memberModel.findOne({ _id: id, addedBy: req.member._id });
+    if (!memberToUpdate) {
+        throw httpError("Member not found", 404, "USER_NOT_FOUND");
+    }
     const member = await memberModel.findByIdAndUpdate(
         id,
-        { active: Boolean(active) },
+        { active: active === true },
         { new: true }
     ).select("-password");
 

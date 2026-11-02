@@ -2,14 +2,12 @@ import { HASH_SALT, JWT_SECRET } from "../../../config/config.env.js";
 import * as DB_services from "../../DB/DB.service.js";
 import memberModel from "../../DB/models/member.js";
 import sessionModel from "../../DB/models/session.js";
-import emailEventEmitter from "../../commn/email/email.events.js";
 import * as redis_service from "../../DB/redis/redise.service.js";
 import { emailTemplate } from "../../commn/email/email_otp.teamplate.js";
 import { compareSync, hashSync } from "bcrypt";
 import { sendEmail, generateOtp } from "../../commn/email/send.email.js";
 import { ProviderEnum, RoleEnum } from "../../commn/enums/member.enums.js";
 import { fileUpload } from "../../commn/utils/fileUpload.js";
-import { eventsEnum } from "../../commn/enums/eventsEnum.js";
 import { generateToken } from "../../commn/utils/security/token.service.js";
 import { v4 as uuidv4 } from "uuid";
 import { successResponse } from "../../commn/utils/successResponse.js";
@@ -43,7 +41,7 @@ const confirmEmail = async ({ email, otp }) => {
         filter: { email: verifyEmail.email },
         update: { confirmed: true },
     });
-    redis_service.delValuse([redis_service.otp_key({ email: verifyEmail.email })]);
+    await redis_service.delValuse([redis_service.otp_key({ email: verifyEmail.email })]);
 };
 
 export const adminSignUp = async (req, res) => {
@@ -55,6 +53,13 @@ export const adminSignUp = async (req, res) => {
     const user = await DB_services.findOne({ model: memberModel, filter: { email } });
     if (user) {
         throw httpError("Member already exists", 409, "MEMBER_EXISTS");
+    }
+
+    const isBlocked = await redis_service.getValuse({
+        key: redis_service.blocked_key({ email: email }),
+    });
+    if (isBlocked) {
+        throw httpError("Member is temporarily blocked due to excessive attempts", 429, "RATE_LIMITED");
     }
 
     const encPassword = hashSync(password, Number(HASH_SALT) || 12);
@@ -77,15 +82,8 @@ export const adminSignUp = async (req, res) => {
         },
     });
 
-    const isBlocked = await redis_service.getValuse({
-        key: redis_service.blocked_key({ email: email }),
-    });
-    if (isBlocked) {
-        throw httpError("Member is temporarily blocked due to excessive attempts", 429, "RATE_LIMITED");
-    }
-
     const otp = await generateOtp();
-    redis_service.setValuse({
+    await redis_service.setValuse({
         key: redis_service.otp_key({ email: email }),
         value: hashSync(`${otp}`, Number(HASH_SALT) || 12),
         ttl: 60 * 10,
@@ -101,14 +99,14 @@ export const adminSignUp = async (req, res) => {
         console.error("Failed to send confirmation email on admin sign up:", emailErr?.message || emailErr);
         await memberModel.findByIdAndDelete(member._id).catch(() => {});
         throw httpError(
-            `Failed to send verification email: ${emailErr?.message || "SMTP error"}. In Vercel, please ensure SMTP_USER and SMTP_PASS (Gmail App Password) are set in Project Settings > Environment Variables.`,
+            `Failed to send verification email: ${emailErr?.message || "Resend API error"}. Please configure RESEND_API_KEY and RESEND_FROM_EMAIL in Vercel Environment Variables.`,
             500,
             "EMAIL_SEND_FAILED"
         );
     }
 
     // OTP limit Counter
-    redis_service.setValuse({
+    await redis_service.setValuse({
         key: redis_service.counter_key({ email: email }),
         value: 0,
         ttl: 60 * 30,
@@ -145,7 +143,7 @@ export const resendOtp = async (req, res) => {
     }
     const counter = await redis_service.getValuse({ key: redis_service.counter_key({ email }) });
     if (counter >= 3) {
-        redis_service.setValuse({
+        await redis_service.setValuse({
             key: redis_service.blocked_key({ email }),
             value: true,
             ttl: 60 * 10,
@@ -165,7 +163,7 @@ export const resendOtp = async (req, res) => {
         throw httpError("User not found or already confirmed", 404, "USER_NOT_FOUND");
     }
     const otp = await generateOtp();
-    redis_service.setValuse({
+    await redis_service.setValuse({
         key: redis_service.otp_key({ email: verifyEmail.email }),
         value: hashSync(`${otp}`, Number(HASH_SALT) || 12),
         ttl: 60 * 15,
@@ -180,12 +178,12 @@ export const resendOtp = async (req, res) => {
     } catch (emailErr) {
         console.error("Failed to resend confirmation email:", emailErr?.message || emailErr);
         throw httpError(
-            `Failed to send verification email: ${emailErr?.message || "SMTP error"}. Please check SMTP configuration in Vercel.`,
+            `Failed to send verification email: ${emailErr?.message || "Resend API error"}. Please check RESEND_API_KEY and RESEND_FROM_EMAIL in Vercel Environment Variables.`,
             500,
             "EMAIL_SEND_FAILED"
         );
     }
-    redis_service.incrementValuse({ key: redis_service.counter_key({ email: verifyEmail.email }) });
+    await redis_service.incrementValuse({ key: redis_service.counter_key({ email: verifyEmail.email }) });
     successResponse({
         res,
         status: 200,
@@ -259,6 +257,7 @@ export const signUpWithG = async (req, res, next) => {
         payload: {
             id: member._id,
             email: member.email,
+            type: "access",
         },
         secret_key: JWT_SECRET,
         options: {
@@ -272,6 +271,7 @@ export const signUpWithG = async (req, res, next) => {
         payload: {
             id: member._id,
             email: member.email,
+            type: "refresh",
         },
         secret_key: JWT_SECRET,
         options: {
@@ -316,7 +316,7 @@ export const signIn = async (req, res, next) => {
     }
 
     const token = await generateToken({
-        payload: { id: member._id, email: member.email },
+        payload: { id: member._id, email: member.email, type: "access" },
         secret_key: JWT_SECRET,
         options: {
             expiresIn: 60 * 20,
@@ -326,7 +326,7 @@ export const signIn = async (req, res, next) => {
 
     const refreshJti = uuidv4();
     const refreshToken = await generateToken({
-        payload: { id: member._id, email: member.email },
+        payload: { id: member._id, email: member.email, type: "refresh" },
         secret_key: JWT_SECRET,
         options: {
             expiresIn: 60 * 60 * 24 * 7,
@@ -398,6 +398,7 @@ export const refreshToken = async (req, res, next) => {
         payload: {
             id: member._id,
             email: member.email,
+            type: "access",
         },
         secret_key: JWT_SECRET,
         options: {
@@ -411,6 +412,7 @@ export const refreshToken = async (req, res, next) => {
         payload: {
             id: member._id,
             email: member.email,
+            type: "refresh",
         },
         secret_key: JWT_SECRET,
         options: {
@@ -527,7 +529,7 @@ export const forgetPassword = async (req, res, next) => {
     } catch (emailErr) {
         console.error("Failed to send password reset OTP email:", emailErr?.message || emailErr);
         throw httpError(
-            `Failed to send password reset email: ${emailErr?.message || "SMTP error"}. Please check SMTP configuration in Vercel.`,
+            `Failed to send password reset email: ${emailErr?.message || "Resend API error"}. Please check RESEND_API_KEY and RESEND_FROM_EMAIL in Vercel Environment Variables.`,
             500,
             "EMAIL_SEND_FAILED"
         );
@@ -695,7 +697,7 @@ export const changeEmail = async (req, res, next) => {
     } catch (emailErr) {
         console.error("Failed to send change email OTP:", emailErr?.message || emailErr);
         throw httpError(
-            `Failed to send email: ${emailErr?.message || "SMTP error"}. Please check SMTP configuration in Vercel.`,
+            `Failed to send email: ${emailErr?.message || "Resend API error"}. Please check RESEND_API_KEY and RESEND_FROM_EMAIL in Vercel Environment Variables.`,
             500,
             "EMAIL_SEND_FAILED"
         );

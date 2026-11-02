@@ -1,141 +1,34 @@
-import nodemailer from "nodemailer";
 import { randomInt } from "node:crypto";
-import { SMTP_PASS, SMTP_USER } from "../../../config/config.env.js";
 
-// Helper to resolve and sanitize SMTP credentials from multiple standard env var names
-export const getSmtpCredentials = () => {
-  const user = (
-    process.env.SMTP_USER ||
-    process.env.GMAIL_USER ||
-    process.env.EMAIL_USER ||
-    process.env.MAIL_USER ||
-    SMTP_USER ||
-    ""
+const RESEND_API_URL = "https://api.resend.com/emails";
+const REQUEST_TIMEOUT_MS = 15000;
+
+const getResendConfig = () => {
+  const apiKey = (process.env.RESEND_API_KEY || "").trim();
+  const from = (
+    process.env.RESEND_FROM_EMAIL ||
+    process.env.EMAIL_FROM ||
+    "TaskVerse <onboarding@resend.dev>"
   ).trim();
 
-  const rawPass =
-    process.env.SMTP_PASS ||
-    process.env.GMAIL_APP_PASSWORD ||
-    process.env.EMAIL_PASS ||
-    process.env.GMAIL_PASS ||
-    process.env.MAIL_PASS ||
-    SMTP_PASS ||
-    "";
-
-  // Google App Passwords often contain spaces (e.g. 'xxxx xxxx xxxx xxxx'); remove all spaces
-  const pass = rawPass.replace(/\s+/g, "");
-
-  return { user, pass };
+  return { apiKey, from };
 };
 
-// Create a serverless-safe transporter instance
-// Note: In serverless environments (e.g. Vercel), pool: false is CRITICAL
-// so stale sockets are not reused across frozen execution contexts.
-export const createTransporter = () => {
-  const { user, pass } = getSmtpCredentials();
-
-  if (!user || !pass) {
-    const errorMsg =
-      "SMTP credentials missing! Both SMTP_USER (or GMAIL_USER) and SMTP_PASS (or GMAIL_APP_PASSWORD) " +
-      "must be configured in your environment variables. In Vercel, add them in Project Settings > Environment Variables.";
-    console.error(errorMsg);
-    throw new Error(errorMsg);
-  }
-
-  const host = process.env.SMTP_HOST || "smtp.gmail.com";
-  const port = Number(process.env.SMTP_PORT) || 465;
-  const secure =
-    process.env.SMTP_SECURE !== undefined
-      ? process.env.SMTP_SECURE === "true"
-      : port === 465;
-
-  return nodemailer.createTransport({
-    host,
-    port,
-    secure, // true for port 465 SSL, false for 587 STARTTLS
-    auth: {
-      user,
-      pass,
-    },
-    tls: {
-      rejectUnauthorized: false,
-    },
-    pool: false, // Critical for serverless runtimes
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 15000,
-  });
+/** Returns a safe configuration status without exposing the API key. */
+export const getEmailStatus = () => {
+  const { apiKey, from } = getResendConfig();
+  return {
+    ok: Boolean(apiKey),
+    configured: Boolean(apiKey),
+    provider: "Resend",
+    from,
+    message: apiKey
+      ? "Resend API key is configured. Send a test email to verify delivery."
+      : "RESEND_API_KEY is missing. Add it to the Vercel project environment variables.",
+  };
 };
 
-// Returns transporter for sending
-export const getTransporter = () => {
-  return createTransporter();
-};
-
-// Check SMTP connection and authentication
-export const verifyEmailConnection = async () => {
-  try {
-    const transporter = getTransporter();
-    await transporter.verify();
-    console.log("SMTP connection verified successfully");
-    return true;
-  } catch (error) {
-    console.error("SMTP verification failed:", {
-      code: error.code,
-      command: error.command,
-      message: error.message,
-    });
-    return false;
-  }
-};
-
-// Diagnostic status check helper (safe to expose to diagnostics/health endpoints)
-export const getSmtpStatus = async () => {
-  const { user, pass } = getSmtpCredentials();
-  const configured = Boolean(user && pass);
-
-  let maskedUser = "Not configured";
-  if (user) {
-    const parts = user.split("@");
-    if (parts.length === 2) {
-      maskedUser = `${parts[0].slice(0, 3)}***@${parts[1]}`;
-    } else {
-      maskedUser = `${user.slice(0, 3)}***`;
-    }
-  }
-
-  if (!configured) {
-    return {
-      ok: false,
-      configured: false,
-      message: "SMTP credentials missing. Please set SMTP_USER and SMTP_PASS in Vercel environment variables.",
-      user: maskedUser,
-    };
-  }
-
-  try {
-    const transporter = getTransporter();
-    await transporter.verify();
-    return {
-      ok: true,
-      configured: true,
-      message: "SMTP server verified and connected successfully.",
-      user: maskedUser,
-      host: process.env.SMTP_HOST || "smtp.gmail.com",
-      port: Number(process.env.SMTP_PORT) || 465,
-    };
-  } catch (err) {
-    return {
-      ok: false,
-      configured: true,
-      message: `SMTP verification failed: ${err.message}`,
-      code: err.code || "UNKNOWN",
-      user: maskedUser,
-    };
-  }
-};
-
-// Send email with timeout safeguard (essential for serverless)
+/** Send email through Resend's HTTPS API (no SMTP sockets or DNS SMTP lookup). */
 export async function sendEmail({
   to,
   subject,
@@ -143,79 +36,108 @@ export async function sendEmail({
   html,
   attachments = [],
   from,
+  replyTo,
+  cc,
+  bcc,
 } = {}) {
+  if (!to || (Array.isArray(to) && to.length === 0)) {
+    throw new Error("Missing required email field: 'to'");
+  }
+  if (!subject) throw new Error("Missing required email field: 'subject'");
+  if (!text && !html) {
+    throw new Error("Missing required email fields: either 'text' or 'html' is required");
+  }
+
+  const { apiKey, from: defaultFrom } = getResendConfig();
+  if (!apiKey) {
+    const error = new Error("RESEND_API_KEY is not configured. Add it in Vercel > Project Settings > Environment Variables.");
+    error.code = "RESEND_NOT_CONFIGURED";
+    throw error;
+  }
+
+  const payload = {
+    from: from || defaultFrom,
+    to: Array.isArray(to) ? to : [to],
+    subject,
+    ...(text ? { text } : {}),
+    ...(html ? { html } : {}),
+    ...(replyTo ? { reply_to: replyTo } : {}),
+    ...(cc ? { cc: Array.isArray(cc) ? cc : [cc] } : {}),
+    ...(bcc ? { bcc: Array.isArray(bcc) ? bcc : [bcc] } : {}),
+  };
+
+  if (Array.isArray(attachments) && attachments.length) {
+    payload.attachments = attachments.map((attachment) => {
+      if (attachment.content) {
+        return {
+          filename: attachment.filename || "attachment",
+          content: Buffer.isBuffer(attachment.content)
+            ? attachment.content.toString("base64")
+            : attachment.content,
+          ...(attachment.content_type || attachment.contentType
+            ? { content_type: attachment.content_type || attachment.contentType }
+            : {}),
+        };
+      }
+      if (attachment.path) {
+        throw new Error("Resend API attachments must be provided as content; filesystem paths are not supported in Vercel serverless functions.");
+      }
+      throw new Error("Unsupported attachment format for Resend. Provide filename and content.");
+    });
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
   try {
-    if (!to || (Array.isArray(to) && to.length === 0)) {
-      throw new Error("Missing required email field: 'to'");
+    const response = await fetch(RESEND_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = result.message || result.error || `Resend request failed with HTTP ${response.status}`;
+      const error = new Error(message);
+      error.code = result.name || `RESEND_HTTP_${response.status}`;
+      error.statusCode = response.status;
+      console.error("Resend email request failed:", {
+        status: response.status,
+        code: error.code,
+        message: error.message,
+      });
+      throw error;
     }
-    if (!subject) {
-      throw new Error("Missing required email field: 'subject'");
-    }
-    if (!text && !html) {
-      throw new Error("Missing required email fields: either 'text' or 'html' is required");
-    }
 
-    const { user } = getSmtpCredentials();
-    const transporter = getTransporter();
-
-    // Generate fallback text if html provided without text
-    const plainText =
-      text || (html ? html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : "");
-
-    const sender = from || process.env.EMAIL_FROM || `"TaskVerse" <${user}>`;
-
-    const mailOptions = {
-      from: sender,
-      to,
-      subject,
-      text: plainText,
-      html,
+    console.info("Email accepted by Resend:", {
+      id: result.id,
+      to: payload.to,
+    });
+    return {
+      ...result,
+      messageId: result.id,
+      accepted: payload.to,
+      rejected: [],
+      response: "Accepted by Resend API",
     };
-
-    if (Array.isArray(attachments) && attachments.length > 0) {
-      mailOptions.attachments = attachments;
-    }
-
-    // Safety timeout: Never allow sendMail to hang the serverless function past 15 seconds
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => {
-        reject(new Error("Email sending timed out after 15 seconds"));
-      }, 15000);
-    });
-
-    const info = await Promise.race([transporter.sendMail(mailOptions), timeoutPromise]);
-
-    console.log("Email accepted by SMTP server:", {
-      messageId: info.messageId,
-      accepted: info.accepted,
-      rejected: info.rejected,
-      response: info.response,
-    });
-
-    return info;
   } catch (error) {
+    if (error.name === "AbortError") {
+      error.message = `Resend email request timed out after ${REQUEST_TIMEOUT_MS}ms`;
+      error.code = "RESEND_TIMEOUT";
+    }
     console.error("Email sending failed:", {
-      code: error.code,
-      command: error.command,
-      responseCode: error.responseCode,
+      code: error.code || "RESEND_REQUEST_FAILED",
       message: error.message,
     });
-
     throw error;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
-// Generate secure 6-digit OTP
-export const generateOtp = () => {
-  return randomInt(100000, 1000000).toString();
-};
-
-// Export proxy for backwards compatibility with direct imports of transporter
-export const transporter = new Proxy({}, {
-  get(target, prop) {
-    const active = getTransporter();
-    const val = active[prop];
-    return typeof val === "function" ? val.bind(active) : val;
-  },
-});
-
+export const generateOtp = () => randomInt(100000, 1000000).toString();

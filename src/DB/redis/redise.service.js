@@ -2,11 +2,15 @@
 import { redis_clint } from "./redise.connection.js";
 
 
-export const revoke_key=({userId,jti})=>{
-    return `revoked_token::${userId}::${jti}`
-}
-export const get_revoke_key = ({ userId }) => {
-    return `revoked_token::${userId}::`
+export const revoke_key = ({ userId, memberId, jti } = {}) => {
+    const id = userId ?? memberId;
+    if (!id || !jti) throw new Error("userId and jti are required to build a revoked-token key");
+    return `revoked_token::${id}::${jti}`;
+};
+export const get_revoke_key = ({ userId, memberId } = {}) => {
+    const id = userId ?? memberId;
+    if (!id) throw new Error("userId is required to build a revoked-token pattern");
+    return `revoked_token::${id}::`;
 }
 export const recent_refresh_key = ({ userId, jti }) => {
     return `recent_refresh::${userId}::${jti}`
