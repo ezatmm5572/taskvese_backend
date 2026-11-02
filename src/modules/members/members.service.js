@@ -62,7 +62,7 @@ export const createMember = async (req, res, next) => {
         "https://taskverse-frontend-ochre.vercel.app"
     ).replace(/\/$/, "");
 
-    emailEventEmitter.emit(eventsEnum.confirmEmail, async () => {
+    try {
         await sendEmail({
             to: email,
             subject: "confirm email",
@@ -74,7 +74,9 @@ export const createMember = async (req, res, next) => {
                 invitedBy: (req.member?.fname || "") + " " + (req.member?.lname || ""),
             }),
         });
-    });
+    } catch (emailErr) {
+        console.error("Failed to send member invitation email:", emailErr?.message || emailErr);
+    }
 
     successResponse({
         res,
@@ -253,13 +255,15 @@ export const resetMemberPassword = async (req, res, next) => {
     member.changeCredentials = new Date();
     await member.save();
 
-    emailEventEmitter.emit(eventsEnum.confirmEmail, async () => {
+    try {
         await sendEmail({
             to: member.email,
             subject: "Your TaskVerse temporary password",
             html: `<p>Hello ${member.fname},</p><p>An administrator has reset your password. Your temporary password is:</p><p><strong>${tempPassword}</strong></p><p>Please log in and change your password immediately.</p>`,
         });
-    });
+    } catch (emailErr) {
+        console.error("Failed to send temporary password email:", emailErr?.message || emailErr);
+    }
 
     successResponse({
         res,

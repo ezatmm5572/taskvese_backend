@@ -40,15 +40,13 @@ export const createNotification = async ({
 
                 if (shouldSend) {
                     try {
-                        emailEventEmitter.emit(eventsEnum.confirmEmail, async () => {
-                            await sendEmail({
-                                to: member.email,
-                                subject: emailSubject,
-                                html: emailHtml || `<p>${text}</p>`,
-                            });
+                        await sendEmail({
+                            to: member.email,
+                            subject: emailSubject,
+                            html: emailHtml || `<p>${text}</p>`,
                         });
                     } catch (e) {
-                        console.error("Email send error:", e.message);
+                        console.error("Email send error in notification:", e?.message || e);
                     }
                 }
             }

@@ -9,6 +9,7 @@ export default async function handler(req, res) {
         await new Promise((resolve) => {
             res.once("finish", resolve);
             res.once("close", resolve);
+            res.once("error", resolve);
             app(req, res);
         });
         await flushEmails();

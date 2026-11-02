@@ -1,39 +1,75 @@
-
 import nodemailer from "nodemailer";
 import { randomInt } from "node:crypto";
 import { SMTP_PASS, SMTP_USER } from "../../../config/config.env.js";
 
-// Lazy transporter singleton
-let cachedTransporter = null;
+// Helper to resolve and sanitize SMTP credentials from multiple standard env var names
+export const getSmtpCredentials = () => {
+  const user = (
+    process.env.SMTP_USER ||
+    process.env.GMAIL_USER ||
+    process.env.EMAIL_USER ||
+    process.env.MAIL_USER ||
+    SMTP_USER ||
+    ""
+  ).trim();
 
-// Get configured SMTP transporter with sanitized credentials
-export const getTransporter = () => {
-  const user = (process.env.SMTP_USER || SMTP_USER || "").trim();
-  const rawPass = process.env.SMTP_PASS || SMTP_PASS || "";
+  const rawPass =
+    process.env.SMTP_PASS ||
+    process.env.GMAIL_APP_PASSWORD ||
+    process.env.EMAIL_PASS ||
+    process.env.GMAIL_PASS ||
+    process.env.MAIL_PASS ||
+    SMTP_PASS ||
+    "";
+
   // Google App Passwords often contain spaces (e.g. 'xxxx xxxx xxxx xxxx'); remove all spaces
   const pass = rawPass.replace(/\s+/g, "");
 
+  return { user, pass };
+};
+
+// Create a serverless-safe transporter instance
+// Note: In serverless environments (e.g. Vercel), pool: false is CRITICAL
+// so stale sockets are not reused across frozen execution contexts.
+export const createTransporter = () => {
+  const { user, pass } = getSmtpCredentials();
+
   if (!user || !pass) {
-    throw new Error("SMTP credentials missing: SMTP_USER and SMTP_PASS must be configured");
+    const errorMsg =
+      "SMTP credentials missing! Both SMTP_USER (or GMAIL_USER) and SMTP_PASS (or GMAIL_APP_PASSWORD) " +
+      "must be configured in your environment variables. In Vercel, add them in Project Settings > Environment Variables.";
+    console.error(errorMsg);
+    throw new Error(errorMsg);
   }
 
-  if (!cachedTransporter) {
-    cachedTransporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user,
-        pass,
-      },
-      tls: {
-        rejectUnauthorized: false,
-      },
-      connectionTimeout: 15000,
-      greetingTimeout: 15000,
-      socketTimeout: 30000,
-    });
-  }
+  const host = process.env.SMTP_HOST || "smtp.gmail.com";
+  const port = Number(process.env.SMTP_PORT) || 465;
+  const secure =
+    process.env.SMTP_SECURE !== undefined
+      ? process.env.SMTP_SECURE === "true"
+      : port === 465;
 
-  return cachedTransporter;
+  return nodemailer.createTransport({
+    host,
+    port,
+    secure, // true for port 465 SSL, false for 587 STARTTLS
+    auth: {
+      user,
+      pass,
+    },
+    tls: {
+      rejectUnauthorized: false,
+    },
+    pool: false, // Critical for serverless runtimes
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
+  });
+};
+
+// Returns transporter for sending
+export const getTransporter = () => {
+  return createTransporter();
 };
 
 // Check SMTP connection and authentication
@@ -49,12 +85,57 @@ export const verifyEmailConnection = async () => {
       command: error.command,
       message: error.message,
     });
-
     return false;
   }
 };
 
-// Send email
+// Diagnostic status check helper (safe to expose to diagnostics/health endpoints)
+export const getSmtpStatus = async () => {
+  const { user, pass } = getSmtpCredentials();
+  const configured = Boolean(user && pass);
+
+  let maskedUser = "Not configured";
+  if (user) {
+    const parts = user.split("@");
+    if (parts.length === 2) {
+      maskedUser = `${parts[0].slice(0, 3)}***@${parts[1]}`;
+    } else {
+      maskedUser = `${user.slice(0, 3)}***`;
+    }
+  }
+
+  if (!configured) {
+    return {
+      ok: false,
+      configured: false,
+      message: "SMTP credentials missing. Please set SMTP_USER and SMTP_PASS in Vercel environment variables.",
+      user: maskedUser,
+    };
+  }
+
+  try {
+    const transporter = getTransporter();
+    await transporter.verify();
+    return {
+      ok: true,
+      configured: true,
+      message: "SMTP server verified and connected successfully.",
+      user: maskedUser,
+      host: process.env.SMTP_HOST || "smtp.gmail.com",
+      port: Number(process.env.SMTP_PORT) || 465,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      configured: true,
+      message: `SMTP verification failed: ${err.message}`,
+      code: err.code || "UNKNOWN",
+      user: maskedUser,
+    };
+  }
+};
+
+// Send email with timeout safeguard (essential for serverless)
 export async function sendEmail({
   to,
   subject,
@@ -74,14 +155,17 @@ export async function sendEmail({
       throw new Error("Missing required email fields: either 'text' or 'html' is required");
     }
 
+    const { user } = getSmtpCredentials();
     const transporter = getTransporter();
-    const user = (process.env.SMTP_USER || SMTP_USER || "").trim();
 
     // Generate fallback text if html provided without text
-    const plainText = text || (html ? html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : "");
+    const plainText =
+      text || (html ? html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : "");
+
+    const sender = from || process.env.EMAIL_FROM || `"TaskVerse" <${user}>`;
 
     const mailOptions = {
-      from: from || `"TaskVerse" <${user}>`,
+      from: sender,
       to,
       subject,
       text: plainText,
@@ -92,7 +176,14 @@ export async function sendEmail({
       mailOptions.attachments = attachments;
     }
 
-    const info = await transporter.sendMail(mailOptions);
+    // Safety timeout: Never allow sendMail to hang the serverless function past 15 seconds
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error("Email sending timed out after 15 seconds"));
+      }, 15000);
+    });
+
+    const info = await Promise.race([transporter.sendMail(mailOptions), timeoutPromise]);
 
     console.log("Email accepted by SMTP server:", {
       messageId: info.messageId,
@@ -102,7 +193,6 @@ export async function sendEmail({
     });
 
     return info;
-
   } catch (error) {
     console.error("Email sending failed:", {
       code: error.code,

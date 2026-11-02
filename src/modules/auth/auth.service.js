@@ -91,13 +91,21 @@ export const adminSignUp = async (req, res) => {
         ttl: 60 * 10,
     });
 
-    emailEventEmitter.emit(eventsEnum.confirmEmail, async () => {
+    try {
         await sendEmail({
             to: email,
             subject: "confirm email",
             html: emailTemplate(otp),
         });
-    });
+    } catch (emailErr) {
+        console.error("Failed to send confirmation email on admin sign up:", emailErr?.message || emailErr);
+        await memberModel.findByIdAndDelete(member._id).catch(() => {});
+        throw httpError(
+            `Failed to send verification email: ${emailErr?.message || "SMTP error"}. In Vercel, please ensure SMTP_USER and SMTP_PASS (Gmail App Password) are set in Project Settings > Environment Variables.`,
+            500,
+            "EMAIL_SEND_FAILED"
+        );
+    }
 
     // OTP limit Counter
     redis_service.setValuse({
@@ -163,13 +171,20 @@ export const resendOtp = async (req, res) => {
         ttl: 60 * 15,
     });
 
-    emailEventEmitter.emit(eventsEnum.confirmEmail, async () => {
+    try {
         await sendEmail({
             to: verifyEmail.email,
             subject: "confirm email",
             html: emailTemplate(otp),
         });
-    });
+    } catch (emailErr) {
+        console.error("Failed to resend confirmation email:", emailErr?.message || emailErr);
+        throw httpError(
+            `Failed to send verification email: ${emailErr?.message || "SMTP error"}. Please check SMTP configuration in Vercel.`,
+            500,
+            "EMAIL_SEND_FAILED"
+        );
+    }
     redis_service.incrementValuse({ key: redis_service.counter_key({ email: verifyEmail.email }) });
     successResponse({
         res,
@@ -503,13 +518,20 @@ export const forgetPassword = async (req, res, next) => {
         value: hashSync(`${otp}`, Number(HASH_SALT) || 12),
         ttl: 60 * 15,
     });
-    emailEventEmitter.emit(eventsEnum.confirmEmail, async () => {
+    try {
         await sendEmail({
             to: member.email,
             subject: "confirm email",
             html: emailTemplate(otp),
         });
-    });
+    } catch (emailErr) {
+        console.error("Failed to send password reset OTP email:", emailErr?.message || emailErr);
+        throw httpError(
+            `Failed to send password reset email: ${emailErr?.message || "SMTP error"}. Please check SMTP configuration in Vercel.`,
+            500,
+            "EMAIL_SEND_FAILED"
+        );
+    }
     await redis_service.incrementValuse({ key: redis_service.counter_key({ email: member.email }) });
 
     await redis_service.setValuse({
@@ -664,13 +686,20 @@ export const changeEmail = async (req, res, next) => {
         ttl: 60 * 15,
     });
 
-    emailEventEmitter.emit(eventsEnum.confirmEmail, async () => {
+    try {
         await sendEmail({
             to: newEmail,
             subject: "Verify your new email address",
             html: emailTemplate(otp),
         });
-    });
+    } catch (emailErr) {
+        console.error("Failed to send change email OTP:", emailErr?.message || emailErr);
+        throw httpError(
+            `Failed to send email: ${emailErr?.message || "SMTP error"}. Please check SMTP configuration in Vercel.`,
+            500,
+            "EMAIL_SEND_FAILED"
+        );
+    }
 
     successResponse({
         res,
