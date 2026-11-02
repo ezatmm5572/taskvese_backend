@@ -6,7 +6,7 @@
 - Fixed refresh-token revocation key construction so both current `userId` and legacy `memberId` call sites resolve to the same Redis key.
 - Added inactive-account rejection to authentication.
 - Removed the obsolete in-memory email event queue. Transactional email calls are awaited directly by their request handlers so Vercel does not need background work after sending the HTTP response.
-- Replaced Gmail SMTP / Nodemailer with the Resend HTTPS Email API.
+- Replaced Gmail SMTP / Nodemailer with the Mailjet HTTPS Email API.
 - Made Redis initialization lazy, so importing the application or running unit tests without Redis credentials does not emit misleading initialization warnings. Redis-dependent operations return a clear configuration error when credentials are absent.
 - Made missing MongoDB configuration fail with a clear startup error instead of starting an API that cannot serve data.
 - Fixed encryption module import-time crashes when `ENCRYPTION_KEY_ENV` is missing and added explicit AES-256 key / ciphertext validation.
@@ -24,7 +24,7 @@
 - All JavaScript files pass `node --check`.
 - All application modules (excluding the executable `src/index.js` entry point) import successfully with test environment variables.
 - All JavaScript files pass `node --check`.
-- The Resend email helper tests pass (mocked HTTPS success, missing API key handling, and six-digit OTP generation).
+- The Mailjet email helper tests pass (mocked HTTPS success, missing credentials handling, provider rejection handling, and six-digit OTP generation).
 - The full existing test suite could not be rerun in this environment because dependency installation did not complete; run `npm ci` followed by `npm test` after extracting the project.
 
 ## Required deployment configuration
@@ -36,8 +36,8 @@ Set these in Vercel Project Settings → Environment Variables (and locally in a
 - `HASH_SALT` (bcrypt cost, e.g. `12`)
 - `UPSTASH_REDIS_REST_URL`
 - `UPSTASH_REDIS_REST_TOKEN`
-- `RESEND_API_KEY`
-- `RESEND_FROM_EMAIL` (use `TaskVerse <onboarding@resend.dev>` for the restricted initial test, or an address on a verified domain for production)
+- `MAILJET_API_KEY` and `MAILJET_SECRET_KEY`
+- `MAILJET_FROM_EMAIL` (the exact sender email address verified and activated in Mailjet; a custom domain is recommended but is not required if Mailjet accepts your verified individual sender)
 - `CORS_ORIGINS` (comma-separated exact frontend origins; no `*`)
 - `FRONTEND_URL`
 - `CLOUD_NAME`, `API_KEY_CLOUDENARY`, `API_SECRET_CLOUDENARY` if uploads are enabled
@@ -47,4 +47,4 @@ Do not upload `.env` files or commit secrets. Rotate credentials that were prese
 
 ## Important limitation
 
-The project was not connected to your live MongoDB, Upstash, Cloudinary, or Resend services during this repair. The code and local smoke tests were checked, but production integration (real email delivery, database operations, and Vercel deployment) still requires the environment variables above and a live deployment test.
+The project was not connected to your live MongoDB, Upstash, Cloudinary, or Mailjet services during this repair. The code and local smoke tests were checked, but production integration (real email delivery, database operations, and Vercel deployment) still requires the environment variables above and a live deployment test.

@@ -1,34 +1,58 @@
 import { randomInt } from "node:crypto";
 
-const RESEND_API_URL = "https://api.resend.com/emails";
+const MAILJET_API_URL = "https://api.mailjet.com/v3.1/send";
 const REQUEST_TIMEOUT_MS = 15000;
 
-const getResendConfig = () => {
-  const apiKey = (process.env.RESEND_API_KEY || "").trim();
-  const from = (
-    process.env.RESEND_FROM_EMAIL ||
-    process.env.EMAIL_FROM ||
-    "TaskVerse <onboarding@resend.dev>"
-  ).trim();
+const getMailjetConfig = () => ({
+  apiKey: (process.env.MAILJET_API_KEY || "").trim(),
+  secretKey: (process.env.MAILJET_SECRET_KEY || "").trim(),
+  fromEmail: (process.env.MAILJET_FROM_EMAIL || "").trim(),
+  fromName: (process.env.MAILJET_FROM_NAME || "TaskVerse").trim(),
+});
 
-  return { apiKey, from };
+const parseAddress = (value, fallbackName = "TaskVerse") => {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error("MAILJET_FROM_EMAIL must be a verified sender email address.");
+  }
+
+  const match = value.trim().match(/^(.*?)\s*<([^<>]+)>$/);
+  if (match) {
+    return {
+      Email: match[2].trim(),
+      Name: match[1].trim().replace(/^['"]|['"]$/g, "") || fallbackName,
+    };
+  }
+
+  return { Email: value.trim(), Name: fallbackName };
 };
 
-/** Returns a safe configuration status without exposing the API key. */
+const normalizeRecipients = (value) => {
+  const recipients = Array.isArray(value) ? value : [value];
+  return recipients.map((recipient) => {
+    if (typeof recipient === "string") return { Email: recipient };
+    if (recipient && typeof recipient === "object" && recipient.email) {
+      return { Email: recipient.email, ...(recipient.name ? { Name: recipient.name } : {}) };
+    }
+    throw new Error("Invalid email recipient. Provide an email string or { email, name } object.");
+  });
+};
+
+/** Returns configuration state without exposing the Mailjet secret key. */
 export const getEmailStatus = () => {
-  const { apiKey, from } = getResendConfig();
+  const config = getMailjetConfig();
+  const configured = Boolean(config.apiKey && config.secretKey && config.fromEmail);
   return {
-    ok: Boolean(apiKey),
-    configured: Boolean(apiKey),
-    provider: "Resend",
-    from,
-    message: apiKey
-      ? "Resend API key is configured. Send a test email to verify delivery."
-      : "RESEND_API_KEY is missing. Add it to the Vercel project environment variables.",
+    ok: configured,
+    configured,
+    provider: "Mailjet",
+    from: config.fromEmail ? `${config.fromName} <${config.fromEmail}>` : null,
+    message: configured
+      ? "Mailjet API credentials and sender are configured. This does not verify that Mailjet has activated the sender."
+      : "Set MAILJET_API_KEY, MAILJET_SECRET_KEY, and MAILJET_FROM_EMAIL in the environment.",
   };
 };
 
-/** Send email through Resend's HTTPS API (no SMTP sockets or DNS SMTP lookup). */
+/** Send email through Mailjet Send API v3.1 over HTTPS (no SMTP connection). */
 export async function sendEmail({
   to,
   subject,
@@ -48,65 +72,73 @@ export async function sendEmail({
     throw new Error("Missing required email fields: either 'text' or 'html' is required");
   }
 
-  const { apiKey, from: defaultFrom } = getResendConfig();
-  if (!apiKey) {
-    const error = new Error("RESEND_API_KEY is not configured. Add it in Vercel > Project Settings > Environment Variables.");
-    error.code = "RESEND_NOT_CONFIGURED";
+  const config = getMailjetConfig();
+  if (!config.apiKey || !config.secretKey || !config.fromEmail) {
+    const error = new Error(
+      "Mailjet is not configured. Set MAILJET_API_KEY, MAILJET_SECRET_KEY, and MAILJET_FROM_EMAIL in Vercel Environment Variables."
+    );
+    error.code = "MAILJET_NOT_CONFIGURED";
     throw error;
   }
 
-  const payload = {
-    from: from || defaultFrom,
-    to: Array.isArray(to) ? to : [to],
-    subject,
-    ...(text ? { text } : {}),
-    ...(html ? { html } : {}),
-    ...(replyTo ? { reply_to: replyTo } : {}),
-    ...(cc ? { cc: Array.isArray(cc) ? cc : [cc] } : {}),
-    ...(bcc ? { bcc: Array.isArray(bcc) ? bcc : [bcc] } : {}),
+  const sender = from
+    ? parseAddress(from, config.fromName)
+    : { Email: config.fromEmail, Name: config.fromName };
+
+  const message = {
+    From: sender,
+    To: normalizeRecipients(to),
+    Subject: subject,
+    ...(text ? { TextPart: text } : {}),
+    ...(html ? { HTMLPart: html } : {}),
   };
 
+  if (cc) message.Cc = normalizeRecipients(cc);
+  if (bcc) message.Bcc = normalizeRecipients(bcc);
+  if (replyTo) message.ReplyTo = parseAddress(replyTo, config.fromName);
+
   if (Array.isArray(attachments) && attachments.length) {
-    payload.attachments = attachments.map((attachment) => {
-      if (attachment.content) {
-        return {
-          filename: attachment.filename || "attachment",
-          content: Buffer.isBuffer(attachment.content)
-            ? attachment.content.toString("base64")
-            : attachment.content,
-          ...(attachment.content_type || attachment.contentType
-            ? { content_type: attachment.content_type || attachment.contentType }
-            : {}),
-        };
+    message.Attachments = attachments.map((attachment) => {
+      if (!attachment?.content) {
+        throw new Error("Mailjet attachments must be provided as content; filesystem paths are not supported.");
       }
-      if (attachment.path) {
-        throw new Error("Resend API attachments must be provided as content; filesystem paths are not supported in Vercel serverless functions.");
-      }
-      throw new Error("Unsupported attachment format for Resend. Provide filename and content.");
+      return {
+        Filename: attachment.filename || "attachment",
+        ContentType: attachment.content_type || attachment.contentType || "application/octet-stream",
+        Base64Content: Buffer.isBuffer(attachment.content)
+          ? attachment.content.toString("base64")
+          : attachment.content,
+      };
     });
   }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const authorization = Buffer.from(`${config.apiKey}:${config.secretKey}`).toString("base64");
 
   try {
-    const response = await fetch(RESEND_API_URL, {
+    const response = await fetch(MAILJET_API_URL, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Basic ${authorization}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ Messages: [message] }),
       signal: controller.signal,
     });
 
     const result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const message = result.message || result.error || `Resend request failed with HTTP ${response.status}`;
-      const error = new Error(message);
-      error.code = result.name || `RESEND_HTTP_${response.status}`;
+    const mailjetMessage = result.Messages?.[0];
+    const firstRecipient = mailjetMessage?.To?.[0];
+
+    if (!response.ok || mailjetMessage?.Status === "error") {
+      const providerError = mailjetMessage?.Errors?.[0];
+      const messageText = providerError?.ErrorMessage || result.ErrorMessage ||
+        `Mailjet request failed with HTTP ${response.status}`;
+      const error = new Error(messageText);
+      error.code = providerError?.ErrorCode || `MAILJET_HTTP_${response.status}`;
       error.statusCode = response.status;
-      console.error("Resend email request failed:", {
+      console.error("Mailjet email request failed:", {
         status: response.status,
         code: error.code,
         message: error.message,
@@ -114,24 +146,32 @@ export async function sendEmail({
       throw error;
     }
 
-    console.info("Email accepted by Resend:", {
-      id: result.id,
-      to: payload.to,
+    if (mailjetMessage?.Status !== "success") {
+      const error = new Error("Mailjet did not confirm that the message was accepted.");
+      error.code = "MAILJET_UNCONFIRMED_RESPONSE";
+      throw error;
+    }
+
+    const accepted = message.To.map((recipient) => recipient.Email);
+    console.info("Email accepted by Mailjet:", {
+      messageId: firstRecipient?.MessageID,
+      to: accepted,
     });
+
     return {
       ...result,
-      messageId: result.id,
-      accepted: payload.to,
+      messageId: firstRecipient?.MessageID || firstRecipient?.MessageUUID,
+      accepted,
       rejected: [],
-      response: "Accepted by Resend API",
+      response: "Accepted by Mailjet API",
     };
   } catch (error) {
     if (error.name === "AbortError") {
-      error.message = `Resend email request timed out after ${REQUEST_TIMEOUT_MS}ms`;
-      error.code = "RESEND_TIMEOUT";
+      error.message = `Mailjet request timed out after ${REQUEST_TIMEOUT_MS}ms`;
+      error.code = "MAILJET_TIMEOUT";
     }
     console.error("Email sending failed:", {
-      code: error.code || "RESEND_REQUEST_FAILED",
+      code: error.code || "MAILJET_REQUEST_FAILED",
       message: error.message,
     });
     throw error;

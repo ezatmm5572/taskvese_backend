@@ -99,7 +99,7 @@ export const adminSignUp = async (req, res) => {
         console.error("Failed to send confirmation email on admin sign up:", emailErr?.message || emailErr);
         await memberModel.findByIdAndDelete(member._id).catch(() => {});
         throw httpError(
-            `Failed to send verification email: ${emailErr?.message || "Resend API error"}. Please configure RESEND_API_KEY and RESEND_FROM_EMAIL in Vercel Environment Variables.`,
+            `Failed to send verification email: ${emailErr?.message || "Mailjet API error"}. Please configure MAILJET_API_KEY, MAILJET_SECRET_KEY, and MAILJET_FROM_EMAIL in Vercel Environment Variables.`,
             500,
             "EMAIL_SEND_FAILED"
         );
@@ -178,7 +178,7 @@ export const resendOtp = async (req, res) => {
     } catch (emailErr) {
         console.error("Failed to resend confirmation email:", emailErr?.message || emailErr);
         throw httpError(
-            `Failed to send verification email: ${emailErr?.message || "Resend API error"}. Please check RESEND_API_KEY and RESEND_FROM_EMAIL in Vercel Environment Variables.`,
+            `Failed to send verification email: ${emailErr?.message || "Mailjet API error"}. Please check MAILJET_API_KEY, MAILJET_SECRET_KEY, and MAILJET_FROM_EMAIL in Vercel Environment Variables.`,
             500,
             "EMAIL_SEND_FAILED"
         );
@@ -529,7 +529,7 @@ export const forgetPassword = async (req, res, next) => {
     } catch (emailErr) {
         console.error("Failed to send password reset OTP email:", emailErr?.message || emailErr);
         throw httpError(
-            `Failed to send password reset email: ${emailErr?.message || "Resend API error"}. Please check RESEND_API_KEY and RESEND_FROM_EMAIL in Vercel Environment Variables.`,
+            `Failed to send password reset email: ${emailErr?.message || "Mailjet API error"}. Please check MAILJET_API_KEY, MAILJET_SECRET_KEY, and MAILJET_FROM_EMAIL in Vercel Environment Variables.`,
             500,
             "EMAIL_SEND_FAILED"
         );
@@ -697,7 +697,7 @@ export const changeEmail = async (req, res, next) => {
     } catch (emailErr) {
         console.error("Failed to send change email OTP:", emailErr?.message || emailErr);
         throw httpError(
-            `Failed to send email: ${emailErr?.message || "Resend API error"}. Please check RESEND_API_KEY and RESEND_FROM_EMAIL in Vercel Environment Variables.`,
+            `Failed to send email: ${emailErr?.message || "Mailjet API error"}. Please check MAILJET_API_KEY, MAILJET_SECRET_KEY, and MAILJET_FROM_EMAIL in Vercel Environment Variables.`,
             500,
             "EMAIL_SEND_FAILED"
         );

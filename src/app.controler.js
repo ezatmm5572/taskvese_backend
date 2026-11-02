@@ -123,7 +123,7 @@ app.get("/api", (req, res) => {
     res.json({ message: "TaskVerse API is running", status: "healthy" });
 });
 
-// Email provider diagnostic endpoint (keeps the old SMTP path as an alias).
+// Email provider diagnostic endpoint.
 app.get(["/public/email-status", "/api/public/email-status", "/public/smtp-status", "/api/public/smtp-status"], (req, res) => {
     const status = getEmailStatus();
     res.status(status.ok ? 200 : 503).json(status);
