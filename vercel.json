@@ -9,9 +9,7 @@
   "functions": {
     "api/index.js": {
       "maxDuration": 30,
-      "includeFiles": [
-        "config/config.env.js"
-      ]
+      "includeFiles": "config/config.env.js"
     }
   }
 }
