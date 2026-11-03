@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { authonticaation } from "../../commn/middleware/authontication.js";
+import { requirePermission } from "../../commn/utils/access-control.js";
 import {
     getTemplates,
     createTemplate,
@@ -12,6 +13,6 @@ const templateRouter = Router();
 templateRouter.get("/", authonticaation, getTemplates);
 templateRouter.post("/", authonticaation, createTemplate);
 templateRouter.delete("/:id", authonticaation, deleteTemplate);
-templateRouter.post("/:id/apply", authonticaation, applyTemplate);
+templateRouter.post("/:id/apply", authonticaation, requirePermission("task.create"), applyTemplate);
 
 export default templateRouter;

@@ -16,6 +16,7 @@ import { searchRouter, changesRouter, exportRouter } from "./modules/sync_export
 import publicRouter from "./modules/public/public.controller.js";
 import eventsRouter from "./modules/events/events.controller.js";
 import cronRouter from "./modules/cron/cron.controller.js";
+import accessRouter from "./modules/access/access.controller.js";
 import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
 import cors from "cors";
@@ -134,6 +135,7 @@ app.use("/public", publicRouter);
 app.use("/api/public", publicRouter);
 
 // Main endpoints
+app.use("/access", accessRouter);
 app.use("/auth", authLimiter, authRouter);
 app.use("/member", memberRouter);
 app.use("/team", teamRouter);
@@ -151,6 +153,7 @@ app.use("/events", eventsRouter);
 app.use("/cron", cronRouter);
 
 // Mount under /api as well for serverless rewrites
+app.use("/api/access", accessRouter);
 app.use("/api/auth", authLimiter, authRouter);
 app.use("/api/member", memberRouter);
 app.use("/api/team", teamRouter);

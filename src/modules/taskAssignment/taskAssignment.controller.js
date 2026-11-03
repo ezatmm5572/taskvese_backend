@@ -16,33 +16,39 @@ import {
     bulkStatusValidation,
 } from "./taskAssignment.validation.js";
 
+import { requirePermission } from "../../commn/utils/access-control.js";
+
 const taskAssignmentRouter = Router();
 
-taskAssignmentRouter.get("/", authonticaation, getAllAssignments);
-taskAssignmentRouter.get("/all", authonticaation, getAllAssignments);
-taskAssignmentRouter.get("/mine", authonticaation, getMyAssignments);
+taskAssignmentRouter.get("/", authonticaation, requirePermission("view.tasks"), getAllAssignments);
+taskAssignmentRouter.get("/all", authonticaation, requirePermission("view.tasks"), getAllAssignments);
+taskAssignmentRouter.get("/mine", authonticaation, requirePermission("view.assignments"), getMyAssignments);
 
 taskAssignmentRouter.post(
     "/addMemberToTask",
     authonticaation,
+    requirePermission("task.assign"),
     validation(addMemberToTaskValidation),
     addMemberToTask
 );
 taskAssignmentRouter.post(
     "/removeMemberFromTask",
     authonticaation,
+    requirePermission("task.assign"),
     validation(removeMemberFromTaskValidation),
     removeMemberFromTask
 );
 taskAssignmentRouter.patch(
     "/taskStatusByMember",
     authonticaation,
+    requirePermission("task.status"),
     validation(taskStatusByMemberValidation),
     taskStatusByMember
 );
 taskAssignmentRouter.post(
     "/bulkStatus",
     authonticaation,
+    requirePermission("task.status"),
     validation(bulkStatusValidation),
     bulkStatus
 );

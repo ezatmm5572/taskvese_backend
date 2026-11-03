@@ -25,26 +25,29 @@ import { authorization } from "../../commn/middleware/authorization.js";
 import { RoleEnum } from "../../commn/enums/member.enums.js";
 import { validation } from "../../commn/middleware/validation.js";
 
+import { requirePermission } from "../../commn/utils/access-control.js";
+
 const teamRouter = Router();
 
-teamRouter.get("/", authonticaation, getAllTeams);
-teamRouter.get("/all", authonticaation, getAllTeams);
+teamRouter.get("/", authonticaation, requirePermission("view.teams"), getAllTeams);
+teamRouter.get("/all", authonticaation, requirePermission("view.teams"), getAllTeams);
 teamRouter.post(
     "/createTeam",
     authonticaation,
+    requirePermission("team.create"),
     authorization([RoleEnum.ADMIN]),
     validation(createTeamValidation),
     createTeam
 );
-teamRouter.post("/addMemberToTeam", authonticaation, validation(addMemberToTeamValidation), addMemberToTeam);
-teamRouter.post("/removeMemberFromTeam", authonticaation, validation(removeMemberFromTeamValidation), removeMemberFromTeam);
-teamRouter.post("/updateMemberRoleInTeam", authonticaation, validation(updateMemberRoleInTeamValidation), updateMemberRoleInTeam);
-teamRouter.post("/updateTeamName", authonticaation, validation(updateTeamNameValidation), updateTeamName);
-teamRouter.post("/deleteTeam", authonticaation, validation(deleteTeamValidation), deleteTeam);
-teamRouter.post("/restore", authonticaation, validation(restoreTeamValidation), restoreTeam);
+teamRouter.post("/addMemberToTeam", authonticaation, requirePermission("team.manage"), validation(addMemberToTeamValidation), addMemberToTeam);
+teamRouter.post("/removeMemberFromTeam", authonticaation, requirePermission("team.manage"), validation(removeMemberFromTeamValidation), removeMemberFromTeam);
+teamRouter.post("/updateMemberRoleInTeam", authonticaation, requirePermission("team.manage"), validation(updateMemberRoleInTeamValidation), updateMemberRoleInTeam);
+teamRouter.post("/updateTeamName", authonticaation, requirePermission("team.manage"), validation(updateTeamNameValidation), updateTeamName);
+teamRouter.post("/deleteTeam", authonticaation, requirePermission("team.delete"), validation(deleteTeamValidation), deleteTeam);
+teamRouter.post("/restore", authonticaation, requirePermission("team.delete"), validation(restoreTeamValidation), restoreTeam);
 
 // Parameterized team routes
-teamRouter.get("/:id", authonticaation, getTeamById);
-teamRouter.get("/:id/activity", authonticaation, getTeamActivity);
+teamRouter.get("/:id", authonticaation, requirePermission("view.teams"), getTeamById);
+teamRouter.get("/:id/activity", authonticaation, requirePermission("view.reports"), getTeamActivity);
 
 export default teamRouter;

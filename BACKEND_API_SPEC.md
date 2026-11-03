@@ -55,3 +55,23 @@ Any team viewer who attempts mutating actions receives `403 VIEWER_READ_ONLY`:
 - **`GET /events`**: SSE connection with 25s heartbeat (`: heartbeat\n\n`) and `Last-Event-ID` replay of last 200 events.
 - **`GET /changes?since=<ISO>`**: Delta polling fallback returning `{ now, tasks: { upserted, deleted }, teams, members, assignments }`.
 - **`GET /export/tasks.csv`**: UTF-8 with BOM (`\uFEFF`) containing complete task breakdown.
+
+
+## Access control (`/access`)
+
+All endpoints require `Authorization: Bearer <accessToken>`. The same routes are mounted under `/api/access`.
+
+- **`GET /access/me`**: Returns `{ enabled, role, permissions }` for the authenticated member. When disabled, the effective permission list contains the full fixed catalog; existing authorization rules remain active.
+- **`GET /access/config`** (system admin only): Returns `{ enabled, rolePresets: { member, viewer } }`.
+- **`PUT /access/config`** (system admin only): Accepts either/both `{ enabled: Boolean, rolePresets: { member: [key], viewer: [key] } }`.
+- **`GET /access/users`** (system admin only): Returns members with saved overrides: `[{ memberId, allow, deny }]`.
+- **`PUT /access/users/:memberId`** (system admin only): Accepts `{ allow: [key], deny: [key] }`. Both arrays empty deletes the override. Unknown keys and overlapping allow/deny entries return `422 VALIDATION_ERROR`; unknown members return `404 USER_NOT_FOUND`.
+- **`GET /access/audit?limit=100`** (system admin only): Returns newest-first audit rows: `[{ _id, actorName, text, createdAt }]`.
+
+Fixed permission keys:
+`view.overview`, `view.tasks`, `view.teams`, `view.members`, `view.assignments`, `view.reports`,
+`task.create`, `task.edit`, `task.delete`, `task.assign`, `task.status`, `task.comment`,
+`task.attach`, `task.logTime`, `task.share`, `team.create`, `team.manage`, `team.delete`,
+`member.invite`, `member.edit`, `report.export`.
+
+The feature is disabled by default. When enabled, protected routes require both the existing resource/role authorization and the corresponding permission. System admins always have all permissions. Viewers remain read-only. Permissions are resolved from MongoDB on each protected request, so changes apply to existing access tokens. Team membership and role changes, preset changes, per-member overrides, and system-role changes are audited and trigger the access refresh event/feed.

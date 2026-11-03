@@ -5,8 +5,45 @@ import memberModel from "../../DB/models/member.js";
 import teamModel from "../../DB/models/team.js";
 import taskModel from "../../DB/models/task.js";
 import activityModel from "../../DB/models/activity.js";
+import accessAuditModel from "../../DB/models/accessAudit.js";
+import { deriveAccessRole } from "../../commn/utils/access-control.js";
+import { broadcastEvent } from "../events/events.service.js";
 import { isTeamManager, httpError, normalizeTeamRole } from "../../commn/utils/permissions.js";
 import { recordActivity } from "../../commn/utils/activity.service.js";
+
+
+const recordTeamAccessRoleChange = async ({
+    actorId, memberId, teamId, teamName, beforeTeamRole, afterTeamRole, beforeEffectiveRole,
+}) => {
+    const updatedMember = await memberModel.findById(memberId)
+        .select("_id fname lname role teams")
+        .lean();
+    if (!updatedMember) return;
+
+    const afterEffectiveRole = await deriveAccessRole(updatedMember);
+    await accessAuditModel.create({
+        actor: actorId,
+        action: "role.changed",
+        target: memberId,
+        text: `Team role changed for ${updatedMember.fname} ${updatedMember.lname} in ${teamName}: ${beforeTeamRole || "not a member"} → ${afterTeamRole || "removed"}`,
+        before: {
+            teamId,
+            teamRole: beforeTeamRole || null,
+            effectiveRole: beforeEffectiveRole,
+        },
+        after: {
+            teamId,
+            teamRole: afterTeamRole || null,
+            effectiveRole: afterEffectiveRole,
+        },
+    });
+    broadcastEvent({
+        type: "access.updated",
+        actorId: String(actorId),
+        targetUserId: String(memberId),
+        message: "team-role",
+    });
+};
 
 export const createTeam = async (req, res, next) => {
     const { name } = req.body;
@@ -186,6 +223,8 @@ export const addMemberToTeam = async (req, res, next) => {
                 filter: { _id: teamId, teamMembers: member._id },
             });
             if (isMember) continue;
+            const beforeTeamRole = null;
+            const beforeEffectiveRole = await deriveAccessRole(member);
 
             await DB_services.updateDocument({
                 model: teamModel,
@@ -208,6 +247,15 @@ export const addMemberToTeam = async (req, res, next) => {
             });
 
             added.push(mId);
+            await recordTeamAccessRoleChange({
+                actorId: req.member._id,
+                memberId: member._id,
+                teamId: team._id,
+                teamName: team.name,
+                beforeTeamRole,
+                afterTeamRole: canonicalRole,
+                beforeEffectiveRole,
+            });
 
             await recordActivity({
                 actor: req.member._id,
@@ -243,6 +291,7 @@ export const addMemberToTeam = async (req, res, next) => {
     if (isMember) {
         throw httpError("Member already in team", 409, "MEMBER_EXISTS");
     }
+    const beforeEffectiveRole = await deriveAccessRole(member);
 
     await DB_services.updateDocument({
         model: teamModel,
@@ -262,6 +311,16 @@ export const addMemberToTeam = async (req, res, next) => {
                 teams: { teamId: team._id, role: canonicalRole },
             },
         },
+    });
+
+    await recordTeamAccessRoleChange({
+        actorId: req.member._id,
+        memberId: member._id,
+        teamId: team._id,
+        teamName: team.name,
+        beforeTeamRole: null,
+        afterTeamRole: canonicalRole,
+        beforeEffectiveRole,
     });
 
     await recordActivity({
@@ -301,6 +360,9 @@ export const removeMemberFromTeam = async (req, res, next) => {
 
     for (const mId of idsToRemove) {
         if (!mongoose.isValidObjectId(mId)) continue;
+        const memberBeforeRemoval = await memberModel.findById(mId).select("_id fname lname role teams").lean();
+        const beforeTeamRole = memberBeforeRemoval?.teams?.find((entry) => String(entry.teamId) === String(teamId))?.role || null;
+        const beforeEffectiveRole = memberBeforeRemoval ? await deriveAccessRole(memberBeforeRemoval) : null;
         await DB_services.updateDocument({
             model: teamModel,
             filter: { _id: teamId },
@@ -311,6 +373,17 @@ export const removeMemberFromTeam = async (req, res, next) => {
             filter: { _id: mId },
             update: { $pull: { teams: { teamId } } },
         });
+        if (memberBeforeRemoval) {
+            await recordTeamAccessRoleChange({
+                actorId: req.member._id,
+                memberId: mId,
+                teamId: team._id,
+                teamName: team.name,
+                beforeTeamRole,
+                afterTeamRole: null,
+                beforeEffectiveRole,
+            });
+        }
         await recordActivity({
             actor: req.member._id,
             action: "member_removed_from_team",
@@ -353,6 +426,8 @@ export const updateMemberRoleInTeam = async (req, res, next) => {
     }
 
     const canonicalRole = normalizeTeamRole(role);
+    const beforeTeamRole = member.teams?.find((entry) => String(entry.teamId) === String(teamId))?.role || null;
+    const beforeEffectiveRole = await deriveAccessRole(member);
     const asAdmin = canonicalRole === "admin";
 
     if (asAdmin) {
@@ -370,10 +445,28 @@ export const updateMemberRoleInTeam = async (req, res, next) => {
     }
 
     // Update role in member's teams array
-    await memberModel.updateOne(
+    const memberRoleUpdate = await memberModel.updateOne(
         { _id: memberId, "teams.teamId": teamId },
         { $set: { "teams.$.role": canonicalRole } }
     );
+    if (!memberRoleUpdate.matchedCount) {
+        // Repair older/inconsistent membership records instead of silently leaving
+        // the derived access role unchanged.
+        await memberModel.updateOne(
+            { _id: memberId },
+            { $push: { teams: { teamId, role: canonicalRole } } }
+        );
+    }
+
+    await recordTeamAccessRoleChange({
+        actorId: req.member._id,
+        memberId,
+        teamId: team._id,
+        teamName: team.name,
+        beforeTeamRole,
+        afterTeamRole: canonicalRole,
+        beforeEffectiveRole,
+    });
 
     await recordActivity({
         actor: req.member._id,

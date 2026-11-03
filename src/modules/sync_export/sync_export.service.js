@@ -8,6 +8,10 @@ import { successResponse } from "../../commn/utils/successResponse.js";
 
 import { deriveTaskStatus } from "../taskAssignment/taskAssignment.service.js";
 import { normalizeTaskStatus } from "../../commn/enums/task.enums.js";
+import accessConfigModel from "../../DB/models/accessConfig.js";
+import accessOverrideModel from "../../DB/models/accessOverride.js";
+import accessAuditModel from "../../DB/models/accessAudit.js";
+import { isSystemAdmin } from "../../commn/utils/permissions.js";
 
 // Global Search
 export const search = async (req, res, next) => {
@@ -89,16 +93,46 @@ export const getChanges = async (req, res, next) => {
         .find({ updatedAt: { $gte: sinceDate } })
         .distinct("_id");
 
+    // Restrict delta IDs to entities the current member is allowed to discover.
+    let visibleTeamIds = await teamModel.find({
+        $or: [{ teamMembers: req.member._id }, { teamAdims: req.member._id }, { addedBy: req.member._id }],
+    }).distinct("_id");
+    let visibleTaskIds = await taskModel.find({
+        $or: [{ createdBy: req.member._id }, { team: { $in: visibleTeamIds } }],
+    }).distinct("_id");
+    const assignedIds = await taskAssignmentModel.find({ member: req.member._id }).distinct("task");
+    visibleTaskIds = [...new Set([...visibleTaskIds.map(String), ...assignedIds.map(String)])];
+    const visibleMemberIds = isSystemAdmin(req.member)
+        ? await memberModel.find({ $or: [{ _id: req.member._id }, { addedBy: req.member._id }] }).distinct("_id")
+        : await memberModel.find({ teams: { $elemMatch: { teamId: { $in: visibleTeamIds } } } }).distinct("_id");
+    const filterIds = (values, allowed) => values.filter((id) => allowed.has(String(id)));
+    const allowedTasks = new Set(visibleTaskIds);
+    const allowedTeams = new Set(visibleTeamIds.map(String));
+    const allowedMembers = new Set(visibleMemberIds.map(String));
+    const visibleAssignmentIds = await taskAssignmentModel
+        .find({ _id: { $in: upsertedAssignments }, task: { $in: visibleTaskIds } })
+        .distinct("_id");
+
+    const config = await accessConfigModel.findOne().lean();
+    const override = await accessOverrideModel.findOne({ member: req.member._id }).lean();
+    const accessAuditChanged = await accessAuditModel.exists({
+        action: { $in: ["override.changed", "role.changed"] },
+        target: req.member._id,
+        createdAt: { $gte: sinceDate },
+    });
+    const accessChanged = (config?.updatedAt && config.updatedAt >= sinceDate) ||
+        (override?.updatedAt && override.updatedAt >= sinceDate) || !!accessAuditChanged;
     successResponse({
         res,
         status: 200,
         message: "Changes delta",
         data: {
             now: now.toISOString(),
-            tasks: { upserted: upsertedTasks, deleted: deletedTasks },
-            teams: { upserted: upsertedTeams, deleted: deletedTeams },
-            members: { upserted: upsertedMembers, deleted: [] },
-            assignments: { upserted: upsertedAssignments, deleted: [] },
+            tasks: { upserted: filterIds(upsertedTasks, allowedTasks), deleted: filterIds(deletedTasks, allowedTasks) },
+            teams: { upserted: filterIds(upsertedTeams, allowedTeams), deleted: filterIds(deletedTeams, allowedTeams) },
+            members: { upserted: filterIds(upsertedMembers, allowedMembers), deleted: [] },
+            assignments: { upserted: visibleAssignmentIds, deleted: [] },
+            access: { upserted: accessChanged ? ["config", String(req.member._id)] : [], deleted: [] },
         },
     });
 };
@@ -221,6 +255,25 @@ export const exportReport = async (req, res, next) => {
     const { team } = req.query;
     const query = { deletedAt: null };
     if (team) query.team = team;
+
+    const userTeams = await teamModel
+        .find({
+            deletedAt: null,
+            $or: [
+                { teamMembers: req.member._id },
+                { teamAdims: req.member._id },
+                { addedBy: req.member._id },
+            ],
+        })
+        .distinct("_id");
+    const assignedTaskIds = await taskAssignmentModel
+        .find({ member: req.member._id })
+        .distinct("task");
+    query.$or = [
+        { createdBy: req.member._id },
+        { team: { $in: userTeams } },
+        { _id: { $in: assignedTaskIds } },
+    ];
 
     const tasks = await taskModel.find(query).populate("team", "name");
     const summary = {

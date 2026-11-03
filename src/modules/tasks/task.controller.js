@@ -48,36 +48,41 @@ import { authonticaation } from "../../commn/middleware/authontication.js";
 import { validation } from "../../commn/middleware/validation.js";
 import { attachmentUpload } from "../../commn/middleware/multer.js";
 
+import { requirePermission } from "../../commn/utils/access-control.js";
+
 const taskRouter = Router();
 
 // Lists & Creation
-taskRouter.get("/", authonticaation, getAllTasks);
-taskRouter.get("/all", authonticaation, getAllTasks);
-taskRouter.post("/createTask", authonticaation, validation(createTaskValidation), createTask);
+taskRouter.get("/", authonticaation, requirePermission("view.tasks"), getAllTasks);
+taskRouter.get("/all", authonticaation, requirePermission("view.tasks"), getAllTasks);
+taskRouter.post("/createTask", authonticaation, requirePermission("task.create"), validation(createTaskValidation), createTask);
 
 // Bulk operations (must be registered before /:taskId)
-taskRouter.post("/bulkDelete", authonticaation, validation(bulkTasksValidation), bulkDeleteTasks);
-taskRouter.post("/bulkRestore", authonticaation, validation(bulkTasksValidation), bulkRestoreTasks);
+taskRouter.post("/bulkDelete", authonticaation, requirePermission("task.delete"), validation(bulkTasksValidation), bulkDeleteTasks);
+taskRouter.post("/bulkRestore", authonticaation, requirePermission("task.delete"), validation(bulkTasksValidation), bulkRestoreTasks);
 
 // Legacy route (taskId in body/query)
-taskRouter.delete("/deleteTask", authonticaation, deleteTask);
+taskRouter.delete("/deleteTask", authonticaation, requirePermission("task.delete"), deleteTask);
 
 // Subtasks routes
 taskRouter.post(
     "/:taskId/subtasks",
     authonticaation,
+    requirePermission("task.edit"),
     validation(createSubtaskValidation),
     createSubtask
 );
 taskRouter.patch(
     "/:taskId/subtasks/:subId",
     authonticaation,
+    requirePermission("task.edit"),
     validation(updateSubtaskValidation),
     updateSubtask
 );
 taskRouter.delete(
     "/:taskId/subtasks/:subId",
     authonticaation,
+    requirePermission("task.edit"),
     validation(deleteSubtaskValidation),
     deleteSubtask
 );
@@ -86,24 +91,28 @@ taskRouter.delete(
 taskRouter.get(
     "/:taskId/comments",
     authonticaation,
+    requirePermission("view.tasks"),
     validation(getCommentsValidation),
     getComments
 );
 taskRouter.post(
     "/:taskId/comments",
     authonticaation,
+    requirePermission("task.comment"),
     validation(createCommentValidation),
     createComment
 );
 taskRouter.patch(
     "/:taskId/comments/:commentId",
     authonticaation,
+    requirePermission("task.comment"),
     validation(updateCommentValidation),
     updateComment
 );
 taskRouter.delete(
     "/:taskId/comments/:commentId",
     authonticaation,
+    requirePermission("task.comment"),
     validation(deleteCommentValidation),
     deleteComment
 );
@@ -112,18 +121,21 @@ taskRouter.delete(
 taskRouter.get(
     "/:taskId/attachments",
     authonticaation,
+    requirePermission("view.tasks"),
     validation(getAttachmentsValidation),
     getAttachments
 );
 taskRouter.post(
     "/:taskId/attachments",
     authonticaation,
+    requirePermission("task.attach"),
     attachmentUpload,
     uploadAttachment
 );
 taskRouter.delete(
     "/:taskId/attachments/:attId",
     authonticaation,
+    requirePermission("task.attach"),
     validation(deleteAttachmentValidation),
     deleteAttachment
 );
@@ -132,35 +144,38 @@ taskRouter.delete(
 taskRouter.get(
     "/:taskId/time",
     authonticaation,
+    requirePermission("view.tasks"),
     validation(getTimeValidation),
     getTimeEntries
 );
 taskRouter.post(
     "/:taskId/time",
     authonticaation,
+    requirePermission("task.logTime"),
     validation(logTimeValidation),
     logTime
 );
 taskRouter.delete(
     "/:taskId/time/:entryId",
     authonticaation,
+    requirePermission("task.logTime"),
     validation(deleteTimeValidation),
     deleteTimeEntry
 );
 
 // Share routes
-taskRouter.post("/:taskId/share", authonticaation, shareTask);
-taskRouter.delete("/:taskId/share", authonticaation, revokeShareTask);
+taskRouter.post("/:taskId/share", authonticaation, requirePermission("task.share"), shareTask);
+taskRouter.delete("/:taskId/share", authonticaation, requirePermission("task.share"), revokeShareTask);
 
 // Recurrence manual completion trigger
-taskRouter.post("/:taskId/complete-and-spawn", authonticaation, completeAndSpawnTask);
+taskRouter.post("/:taskId/complete-and-spawn", authonticaation, requirePermission("task.status"), completeAndSpawnTask);
 
 // Task restore
-taskRouter.post("/:taskId/restore", authonticaation, validation(restoreTaskValidation), restoreTask);
+taskRouter.post("/:taskId/restore", authonticaation, requirePermission("task.delete"), validation(restoreTaskValidation), restoreTask);
 
 // Task get by ID, update, and delete
-taskRouter.get("/:taskId", authonticaation, getTaskById);
-taskRouter.patch("/:taskId", authonticaation, validation(updateTaskValidation), updateTask);
-taskRouter.delete("/:taskId", authonticaation, validation(deleteTaskValidation), deleteTask);
+taskRouter.get("/:taskId", authonticaation, requirePermission("view.tasks"), getTaskById);
+taskRouter.patch("/:taskId", authonticaation, requirePermission("task.edit"), validation(updateTaskValidation), updateTask);
+taskRouter.delete("/:taskId", authonticaation, requirePermission("task.delete"), validation(deleteTaskValidation), deleteTask);
 
 export default taskRouter;

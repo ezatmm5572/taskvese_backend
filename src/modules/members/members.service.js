@@ -16,6 +16,9 @@ import {
     normalizeTeamRole,
 } from "../../commn/utils/permissions.js";
 import crypto from "crypto";
+import accessOverrideModel from "../../DB/models/accessOverride.js";
+import accessAuditModel from "../../DB/models/accessAudit.js";
+import { broadcastEvent } from "../events/events.service.js";
 
 export const createMember = async (req, res, next) => {
     if (!isSystemAdmin(req.member)) {
@@ -156,7 +159,29 @@ export const updateMember = async (req, res, next) => {
         throw httpError("Member not found", 404, "USER_NOT_FOUND");
     }
 
-    const { fname, lname, gender } = req.body;
+    const { fname, lname, gender, role } = req.body;
+    let roleAudit = null;
+    if (role !== undefined) {
+        if (!isSA) throw httpError("Only system admins can change system roles", 403, "FORBIDDEN");
+        if (!["admin", "member"].includes(role)) throw httpError("role must be admin or member", 422, "VALIDATION_ERROR");
+        if (isSelf) throw httpError("You cannot change your own role", 403, "FORBIDDEN");
+        if (member.role !== role) {
+            if (member.role === "admin" && role === "member") {
+                const adminCount = await memberModel.countDocuments({ role: "admin" });
+                if (adminCount <= 1) throw httpError("The last system admin cannot be demoted", 409, "LAST_ADMIN");
+            }
+            const previousRole = member.role;
+            member.role = role;
+            roleAudit = {
+                actor: req.member._id,
+                action: "role.changed",
+                target: member._id,
+                text: `System role changed for ${member.fname} ${member.lname}: ${previousRole} → ${role}`,
+                before: { role: previousRole },
+                after: { role },
+            };
+        }
+    }
     if (fname !== undefined) member.fname = fname;
     if (lname !== undefined) member.lname = lname;
     if (gender !== undefined) member.gender = gender;
@@ -169,6 +194,15 @@ export const updateMember = async (req, res, next) => {
     }
 
     await member.save();
+    if (roleAudit) {
+        await accessAuditModel.create(roleAudit);
+        broadcastEvent({
+            type: "access.updated",
+            actorId: String(req.member._id),
+            targetUserId: String(member._id),
+            message: "role",
+        });
+    }
 
     const updated = await memberModel
         .findById(id)
@@ -210,7 +244,7 @@ export const deleteMember = async (req, res, next) => {
     if (memberToDelete.role === "admin") {
         const adminCount = await memberModel.countDocuments({ role: "admin" });
         if (adminCount <= 1) {
-            throw httpError("Cannot delete the last system admin", 400, "BAD_REQUEST");
+            throw httpError("The last system admin cannot be deleted", 409, "LAST_ADMIN");
         }
     }
 
@@ -228,6 +262,7 @@ export const deleteMember = async (req, res, next) => {
         }
     );
 
+    await accessOverrideModel.deleteOne({ member: id });
     await memberModel.findByIdAndDelete(id);
 
     successResponse({

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { authonticaation } from "../../commn/middleware/authontication.js";
+import { requirePermission } from "../../commn/utils/access-control.js";
 import {
     search,
     getChanges,
@@ -14,8 +15,8 @@ export const changesRouter = Router();
 changesRouter.get("/", authonticaation, getChanges);
 
 export const exportRouter = Router();
-exportRouter.get("/tasks.csv", authonticaation, exportTasksCsv);
-exportRouter.get("/report.pdf", authonticaation, exportReport);
+exportRouter.get("/tasks.csv", authonticaation, requirePermission("report.export"), exportTasksCsv);
+exportRouter.get("/report.pdf", authonticaation, requirePermission("report.export"), exportReport);
 
 export default {
     searchRouter,
