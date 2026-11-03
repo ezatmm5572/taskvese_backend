@@ -48,20 +48,16 @@ const recordTeamAccessRoleChange = async ({
 export const createTeam = async (req, res, next) => {
     const { name } = req.body;
 
+    // The creator owns and manages the team, but is not automatically a member.
+    // Membership is granted explicitly through addMemberToTeam.
     const team = await DB_services.createDocument({
         model: teamModel,
         doc: {
             name,
             addedBy: req.member._id,
-            teamAdims: [req.member._id],
-            teamMembers: [req.member._id],
+            teamAdims: [],
+            teamMembers: [],
         },
-    });
-
-    await DB_services.updateDocument({
-        model: memberModel,
-        filter: { _id: req.member._id },
-        update: { $push: { teams: { teamId: team._id, role: "admin" } } },
     });
 
     await recordActivity({
