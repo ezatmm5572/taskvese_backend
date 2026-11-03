@@ -8,7 +8,7 @@ import activityModel from "../../DB/models/activity.js";
 import accessAuditModel from "../../DB/models/accessAudit.js";
 import { deriveAccessRole } from "../../commn/utils/access-control.js";
 import { broadcastEvent } from "../events/events.service.js";
-import { isTeamManager, httpError, normalizeTeamRole } from "../../commn/utils/permissions.js";
+import { isTeamManager, httpError, normalizeTeamRole, getAdminHierarchyScope, isSystemAdmin, canManageTeamInAdminScope } from "../../commn/utils/permissions.js";
 import { recordActivity } from "../../commn/utils/activity.service.js";
 
 
@@ -80,12 +80,18 @@ export const createTeam = async (req, res, next) => {
 };
 
 export const getAllTeams = async (req, res, next) => {
+    const scope = await getAdminHierarchyScope(req.member);
     const filter = {
         deletedAt: null,
         $or: [
             { teamMembers: req.member._id },
             { addedBy: req.member._id },
             { teamAdims: req.member._id },
+            ...(isSystemAdmin(req.member) ? [
+                { addedBy: { $in: scope.memberIds } },
+                { teamMembers: { $in: scope.memberIds } },
+                { teamAdims: { $in: scope.memberIds } },
+            ] : []),
         ],
     };
 
@@ -115,9 +121,11 @@ export const getTeamById = async (req, res, next) => {
     if (!team) {
         throw httpError("Team not found", 404, "NOT_FOUND");
     }
-    const canViewTeam = String(team.addedBy) === String(req.member._id) ||
+    const scope = await getAdminHierarchyScope(req.member);
+    const canViewTeam = String(team.addedBy?._id || team.addedBy) === String(req.member._id) ||
         (team.teamAdims || []).some((id) => String(id) === String(req.member._id)) ||
-        (team.teamMembers || []).some((id) => String(id) === String(req.member._id));
+        (team.teamMembers || []).some((id) => String(id) === String(req.member._id)) ||
+        (isSystemAdmin(req.member) && scope.memberIds.includes(String(team.addedBy?._id || team.addedBy)));
     if (!canViewTeam) throw httpError("You are not a member of this team", 403, "FORBIDDEN");
 
     // Get task counts for this team
@@ -175,9 +183,11 @@ export const getTeamActivity = async (req, res, next) => {
     if (!team) {
         throw httpError("Team not found", 404, "NOT_FOUND");
     }
-    const canViewTeam = String(team.addedBy) === String(req.member._id) ||
+    const scope = await getAdminHierarchyScope(req.member);
+    const canViewTeam = String(team.addedBy?._id || team.addedBy) === String(req.member._id) ||
         (team.teamAdims || []).some((id) => String(id) === String(req.member._id)) ||
-        (team.teamMembers || []).some((id) => String(id) === String(req.member._id));
+        (team.teamMembers || []).some((id) => String(id) === String(req.member._id)) ||
+        (isSystemAdmin(req.member) && scope.memberIds.includes(String(team.addedBy?._id || team.addedBy)));
     if (!canViewTeam) throw httpError("You are not a member of this team", 403, "FORBIDDEN");
 
     const activities = await activityModel
@@ -203,7 +213,7 @@ export const addMemberToTeam = async (req, res, next) => {
         throw httpError("Team not found", 404, "NOT_FOUND");
     }
 
-    if (!isTeamManager(team, req.member)) {
+    if (!(await canManageTeamInAdminScope(team, req.member))) {
         throw httpError("You are not the team admin", 403, "NOT_TEAM_MANAGER");
     }
 
@@ -346,7 +356,7 @@ export const removeMemberFromTeam = async (req, res, next) => {
         throw httpError("Team not found", 404, "NOT_FOUND");
     }
 
-    if (!isTeamManager(team, req.member)) {
+    if (!(await canManageTeamInAdminScope(team, req.member))) {
         throw httpError("You are not the team admin", 403, "NOT_TEAM_MANAGER");
     }
 
@@ -421,7 +431,7 @@ export const updateMemberRoleInTeam = async (req, res, next) => {
         throw httpError("Member not found in team", 404, "USER_NOT_FOUND");
     }
 
-    if (!isTeamManager(team, req.member)) {
+    if (!(await canManageTeamInAdminScope(team, req.member))) {
         throw httpError("You are not the team admin", 403, "NOT_TEAM_MANAGER");
     }
 
@@ -491,7 +501,7 @@ export const updateTeamName = async (req, res, next) => {
         throw httpError("Team not found", 404, "NOT_FOUND");
     }
 
-    if (!isTeamManager(team, req.member)) {
+    if (!(await canManageTeamInAdminScope(team, req.member))) {
         throw httpError("You are not the team admin", 403, "NOT_TEAM_MANAGER");
     }
 
@@ -525,7 +535,7 @@ export const deleteTeam = async (req, res, next) => {
         throw httpError("Team not found", 404, "NOT_FOUND");
     }
 
-    if (!isTeamManager(team, req.member)) {
+    if (!(await canManageTeamInAdminScope(team, req.member))) {
         throw httpError("You are not the team admin", 403, "NOT_TEAM_MANAGER");
     }
 
@@ -559,7 +569,7 @@ export const restoreTeam = async (req, res, next) => {
         throw httpError("Team not found", 404, "NOT_FOUND");
     }
 
-    if (!isTeamManager(team, req.member)) {
+    if (!(await canManageTeamInAdminScope(team, req.member))) {
         throw httpError("You are not the team admin", 403, "NOT_TEAM_MANAGER");
     }
 

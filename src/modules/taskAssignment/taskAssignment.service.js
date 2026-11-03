@@ -5,6 +5,7 @@ import teamModel from "../../DB/models/team.js";
 import taskModel from "../../DB/models/task.js";
 import taskAssignmentModel from "../../DB/models/taskAssignment.js";
 import { successResponse } from "../../commn/utils/successResponse.js";
+import { getAdminHierarchyScope, isSystemAdmin, canManageTaskInAdminScope } from "../../commn/utils/permissions.js";
 import { TaskStatusEnum, normalizeTaskStatus } from "../../commn/enums/task.enums.js";
 import { taskAssignedTemplate } from "../../commn/email/email_task.teamplate.js";
 import {
@@ -92,7 +93,7 @@ export const addMemberToTask = async (req, res, next) => {
         ? await DB_services.findOne({ model: teamModel, filter: { _id: task.team } })
         : null;
 
-    if (!canManageTask(req.member, task, team)) {
+    if (!(await canManageTaskInAdminScope(req.member, task, team))) {
         throw httpError("You are not allowed to assign this task", 403, "FORBIDDEN");
     }
 
@@ -276,7 +277,7 @@ export const removeMemberFromTask = async (req, res, next) => {
         ? await DB_services.findOne({ model: teamModel, filter: { _id: task.team } })
         : null;
 
-    if (!canManageTask(req.member, task, team)) {
+    if (!(await canManageTaskInAdminScope(req.member, task, team))) {
         throw httpError("You are not allowed to remove members from this task", 403, "FORBIDDEN");
     }
 
@@ -342,7 +343,7 @@ export const taskStatusByMember = async (req, res, next) => {
     // If targetMemberId provided, only TM can act on behalf
     let effectiveMemberId = req.member._id;
     if (targetMemberId && !same(targetMemberId, req.member._id)) {
-        if (!canManageTask(req.member, task, team)) {
+        if (!(await canManageTaskInAdminScope(req.member, task, team))) {
             throw httpError("Only task managers can update status on behalf of others", 403, "FORBIDDEN");
         }
         effectiveMemberId = targetMemberId;
@@ -473,18 +474,25 @@ export const bulkStatus = async (req, res, next) => {
 };
 
 export const getAllAssignments = async (req, res, next) => {
+    const scope = await getAdminHierarchyScope(req.member);
     const userTeams = await teamModel.find({
         deletedAt: null,
         $or: [
             { teamMembers: req.member._id },
             { teamAdims: req.member._id },
             { addedBy: req.member._id },
+            ...(isSystemAdmin(req.member) ? [
+                { addedBy: { $in: scope.memberIds } },
+                { teamMembers: { $in: scope.memberIds } },
+                { teamAdims: { $in: scope.memberIds } },
+            ] : []),
         ],
     }).distinct("_id");
     const visibleTaskIds = await taskModel.find({
         deletedAt: null,
         $or: [
             { createdBy: req.member._id },
+            ...(isSystemAdmin(req.member) ? [{ createdBy: { $in: scope.memberIds } }] : []),
             { team: { $in: userTeams } },
         ],
     }).distinct("_id");

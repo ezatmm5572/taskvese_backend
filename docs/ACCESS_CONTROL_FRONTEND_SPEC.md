@@ -357,3 +357,7 @@ and turning the switch off lifts the restriction immediately.
 
 
 Please send back: staging URL, any key you renamed or added (keep the strings in section 3 stable), and the migration notes.
+
+### Shared Admin Hierarchy
+
+A promoted member keeps their original `addedBy` relationship. Admins belonging to the same primary-admin hierarchy share visibility of members, teams, tasks, assignments, templates, dashboard data, search results, sync changes, and exports. A member granted `task.create` or `team.create` creates resources that remain visible to admins in that hierarchy. No client-side ownership remapping or database reset is required.

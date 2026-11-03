@@ -40,3 +40,15 @@ After sign-in, call `GET /access/me`. Call it again when the changes feed report
 
 ## Deployment notes
 No new environment variables are required. Ensure the deployed MongoDB user can create and write the three access-control collections. Test with access control disabled first, then enable it in staging and run the frontend integration suite. JavaScript syntax and relative-import checks were run during implementation; the full runtime test suite still needs to be run after dependencies are installed.
+
+## Admin hierarchy / shared workspace visibility
+
+System admins created by another system admin now resolve to the same admin hierarchy scope as their primary admin. The scope is derived from the existing `members.addedBy` relationships; no database migration or member deletion is required.
+
+- Admins in the same hierarchy can list and manage members created by admins in that hierarchy.
+- Tasks created by any member in the hierarchy are visible to its admins, including tasks created by a member who has the `task.create` permission.
+- Teams created by admins or delegated members in the hierarchy are visible to its admins. Hierarchy admins can manage those teams.
+- Assignment lists, dashboard task totals, templates, global search, delta sync, and CSV/report exports use the same hierarchy scope.
+- A member can create a team when granted `team.create`; the endpoint no longer requires the system-level `admin` role separately. Team-level management remains scoped to the creator/team managers and the admin hierarchy.
+
+The hierarchy is calculated from existing `addedBy` links at request time. Existing records are retained as-is.

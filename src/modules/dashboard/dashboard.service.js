@@ -4,6 +4,7 @@ import memberModel from "../../DB/models/member.js";
 import taskAssignmentModel from "../../DB/models/taskAssignment.js";
 import timeEntryModel from "../../DB/models/timeEntry.js";
 import { successResponse } from "../../commn/utils/successResponse.js";
+import { getAdminHierarchyScope, isSystemAdmin } from "../../commn/utils/permissions.js";
 
 import { TaskStatusEnum, normalizeTaskStatus } from "../../commn/enums/task.enums.js";
 
@@ -17,6 +18,7 @@ export const getDashboardOverview = async (req, res, next) => {
 
     // Task access scoping
     {
+        const scope = await getAdminHierarchyScope(req.member);
         const userTeams = await teamModel
             .find({
                 deletedAt: null,
@@ -24,6 +26,11 @@ export const getDashboardOverview = async (req, res, next) => {
                     { teamMembers: req.member._id },
                     { teamAdims: req.member._id },
                     { addedBy: req.member._id },
+                    ...(isSystemAdmin(req.member) ? [
+                        { addedBy: { $in: scope.memberIds } },
+                        { teamMembers: { $in: scope.memberIds } },
+                        { teamAdims: { $in: scope.memberIds } },
+                    ] : []),
                 ],
             })
             .distinct("_id");
@@ -34,6 +41,7 @@ export const getDashboardOverview = async (req, res, next) => {
 
         query.$or = [
             { createdBy: req.member._id },
+            ...(isSystemAdmin(req.member) ? [{ createdBy: { $in: scope.memberIds } }] : []),
             { team: { $in: userTeams } },
             { _id: { $in: assignedTaskIds } },
         ];

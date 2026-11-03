@@ -21,8 +21,6 @@ import {
     restoreTeamValidation,
 } from "./team.validation.js";
 import { authonticaation } from "../../commn/middleware/authontication.js";
-import { authorization } from "../../commn/middleware/authorization.js";
-import { RoleEnum } from "../../commn/enums/member.enums.js";
 import { validation } from "../../commn/middleware/validation.js";
 
 import { requirePermission } from "../../commn/utils/access-control.js";
@@ -35,7 +33,6 @@ teamRouter.post(
     "/createTeam",
     authonticaation,
     requirePermission("team.create"),
-    authorization([RoleEnum.ADMIN]),
     validation(createTeamValidation),
     createTeam
 );

@@ -1,3 +1,5 @@
+import memberModel from "../../DB/models/member.js";
+
 // Shared permission helpers.
 // NOTE: the team schema field is spelled "teamAdims" (kept as-is to match existing data).
 
@@ -94,4 +96,57 @@ export const canViewTask = (member, task, team = null, isAssigned = false) => {
         if (role) return true;
     }
     return false;
+};
+
+
+// Admins created under the same root admin share one management scope.
+// This keeps resources created by delegated admins visible to the primary admin
+// and to other admins in the same hierarchy without changing existing records.
+export const getAdminHierarchyScope = async (member) => {
+    const selfId = String(member?._id || "");
+    if (!selfId) return { adminIds: [], memberIds: [] };
+    if (!isSystemAdmin(member)) {
+        return { adminIds: [], memberIds: [member._id] };
+    }
+
+    let root = await memberModel.findById(member._id).select("_id role addedBy").lean();
+    const visited = new Set();
+    while (root?.addedBy && !visited.has(String(root.addedBy))) {
+        visited.add(String(root.addedBy));
+        const parent = await memberModel.findById(root.addedBy).select("_id role addedBy").lean();
+        if (!parent || parent.role !== "admin") break;
+        root = parent;
+    }
+
+    const adminIds = new Set([String(root?._id || member._id)]);
+    let frontier = [String(root?._id || member._id)];
+    while (frontier.length) {
+        const children = await memberModel.find({ addedBy: { $in: frontier }, role: "admin" })
+            .select("_id").lean();
+        frontier = children.map((item) => String(item._id)).filter((id) => !adminIds.has(id));
+        frontier.forEach((id) => adminIds.add(id));
+    }
+
+    const adminObjectIds = [...adminIds];
+    const descendants = await memberModel.find({ addedBy: { $in: adminObjectIds } }).distinct("_id");
+    const memberIds = [...new Set([...adminObjectIds, ...descendants.map(String)])];
+    return { adminIds: adminObjectIds, memberIds };
+};
+
+
+export const canManageTeamInAdminScope = async (team, member) => {
+    if (isTeamManager(team, member)) return true;
+    if (!isSystemAdmin(member)) return false;
+    const scope = await getAdminHierarchyScope(member);
+    return scope.memberIds.includes(String(team?.addedBy?._id || team?.addedBy || ""));
+};
+
+
+export const canManageTaskInAdminScope = async (member, task, team = null) => {
+    if (canManageTask(member, task, team)) return true;
+    if (!isSystemAdmin(member)) return false;
+    const scope = await getAdminHierarchyScope(member);
+    const creatorId = String(task?.createdBy?._id || task?.createdBy || "");
+    const teamOwnerId = String(team?.addedBy?._id || team?.addedBy || "");
+    return scope.memberIds.includes(creatorId) || scope.memberIds.includes(teamOwnerId);
 };

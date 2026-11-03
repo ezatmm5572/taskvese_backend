@@ -3,11 +3,12 @@ import taskModel from "../../DB/models/task.js";
 import taskAssignmentModel from "../../DB/models/taskAssignment.js";
 import teamModel from "../../DB/models/team.js";
 import { successResponse } from "../../commn/utils/successResponse.js";
-import { httpError, same, isTeamManager } from "../../commn/utils/permissions.js";
+import { httpError, same, isTeamManager, getAdminHierarchyScope, isSystemAdmin, canManageTeamInAdminScope } from "../../commn/utils/permissions.js";
 import { TaskStatusEnum } from "../../commn/enums/task.enums.js";
 
 export const getTemplates = async (req, res, next) => {
     // Find user's teams
+    const scope = await getAdminHierarchyScope(req.member);
     const userTeams = await teamModel
         .find({
             deletedAt: null,
@@ -15,6 +16,11 @@ export const getTemplates = async (req, res, next) => {
                 { teamMembers: req.member._id },
                 { teamAdims: req.member._id },
                 { addedBy: req.member._id },
+                ...(isSystemAdmin(req.member) ? [
+                    { addedBy: { $in: scope.memberIds } },
+                    { teamMembers: { $in: scope.memberIds } },
+                    { teamAdims: { $in: scope.memberIds } },
+                ] : []),
             ],
         })
         .distinct("_id");
@@ -23,6 +29,7 @@ export const getTemplates = async (req, res, next) => {
         .find({
             $or: [
                 { owner: req.member._id },
+                ...(isSystemAdmin(req.member) ? [{ owner: { $in: scope.memberIds } }] : []),
                 { scope: "team", team: { $in: userTeams } },
             ],
         })
@@ -64,7 +71,7 @@ export const createTemplate = async (req, res, next) => {
     if (scope === "team" && team) {
         const teamDoc = await teamModel.findById(team);
         if (!teamDoc) throw httpError("Team not found", 404, "NOT_FOUND");
-        if (!isTeamManager(teamDoc, req.member)) {
+        if (!(await canManageTeamInAdminScope(teamDoc, req.member))) {
             throw httpError("Only team managers can create team templates", 403, "FORBIDDEN");
         }
     }
@@ -102,7 +109,7 @@ export const deleteTemplate = async (req, res, next) => {
     let allowed = same(template.owner, req.member._id);
     if (!allowed && template.team) {
         const teamDoc = await teamModel.findById(template.team);
-        if (teamDoc && isTeamManager(teamDoc, req.member)) {
+        if (teamDoc && await canManageTeamInAdminScope(teamDoc, req.member)) {
             allowed = true;
         }
     }

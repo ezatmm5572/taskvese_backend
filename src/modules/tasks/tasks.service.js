@@ -17,6 +17,9 @@ import {
     assertNotViewer,
     same,
     isTeamManager,
+    getAdminHierarchyScope,
+    isSystemAdmin,
+    canManageTaskInAdminScope,
 } from "../../commn/utils/permissions.js";
 import { successResponse } from "../../commn/utils/successResponse.js";
 import { TaskStatusEnum, normalizeTaskStatus } from "../../commn/enums/task.enums.js";
@@ -37,6 +40,10 @@ import crypto from "crypto";
 export const checkCanAccessTask = async (member, task, team = null) => {
     if (!member || !task) return false;
     if (same(task.createdBy, member._id)) return true;
+    if (isSystemAdmin(member)) {
+        const scope = await getAdminHierarchyScope(member);
+        if (scope.memberIds.includes(String(task.createdBy?._id || task.createdBy || ""))) return true;
+    }
 
     if (!team && task.team) {
         team = await teamModel.findById(task.team);
@@ -117,7 +124,8 @@ export const createTask = async (req, res, next) => {
         if (isViewerInTeam(team, req.member)) {
             throw httpError("Viewers have read-only access", 403, "VIEWER_READ_ONLY");
         }
-        if (!canCreateTask(req.member, team)) {
+        const hierarchyManager = await canManageTeamInAdminScope(team, req.member);
+        if (!hierarchyManager && !canCreateTask(req.member, team)) {
             throw httpError("You are not allowed to create tasks in this team", 403, "FORBIDDEN");
         }
     }
@@ -307,6 +315,7 @@ export const getAllTasks = async (req, res, next) => {
 
     // Tenant/access scoping applies to admins too: each admin sees their own tasks,
     // tasks in teams they belong to, and tasks explicitly assigned to them.
+    const scope = await getAdminHierarchyScope(req.member);
     const userTeams = await teamModel
         .find({
             deletedAt: null,
@@ -314,6 +323,11 @@ export const getAllTasks = async (req, res, next) => {
                 { teamMembers: req.member._id },
                 { teamAdims: req.member._id },
                 { addedBy: req.member._id },
+                ...(isSystemAdmin(req.member) ? [
+                    { addedBy: { $in: scope.memberIds } },
+                    { teamMembers: { $in: scope.memberIds } },
+                    { teamAdims: { $in: scope.memberIds } },
+                ] : []),
             ],
         })
         .distinct("_id");
@@ -324,6 +338,7 @@ export const getAllTasks = async (req, res, next) => {
 
     query.$or = [
         { createdBy: req.member._id },
+        ...(isSystemAdmin(req.member) ? [{ createdBy: { $in: scope.memberIds } }] : []),
         { team: { $in: userTeams } },
         { _id: { $in: assignedTaskIds } },
     ];
@@ -536,7 +551,7 @@ export const updateTask = async (req, res, next) => {
     }
 
     const team = task.team ? await teamModel.findById(task.team) : null;
-    if (!canManageTask(req.member, task, team)) {
+    if (!(await canManageTaskInAdminScope(req.member, task, team))) {
         throw httpError("You are not allowed to update this task", 403, "FORBIDDEN");
     }
 
@@ -631,7 +646,7 @@ export const deleteTask = async (req, res, next) => {
     }
 
     const team = task.team ? await teamModel.findById(task.team) : null;
-    if (!canManageTask(req.member, task, team)) {
+    if (!(await canManageTaskInAdminScope(req.member, task, team))) {
         throw httpError("You are not allowed to delete this task", 403, "FORBIDDEN");
     }
 
@@ -665,7 +680,7 @@ export const restoreTask = async (req, res, next) => {
     }
 
     const team = task.team ? await teamModel.findById(task.team) : null;
-    if (!canManageTask(req.member, task, team)) {
+    if (!(await canManageTaskInAdminScope(req.member, task, team))) {
         throw httpError("You are not allowed to restore this task", 403, "FORBIDDEN");
     }
 
@@ -719,7 +734,7 @@ export const bulkDeleteTasks = async (req, res, next) => {
                 continue;
             }
             const team = task.team ? await teamModel.findById(task.team) : null;
-            if (!canManageTask(req.member, task, team)) {
+            if (!(await canManageTaskInAdminScope(req.member, task, team))) {
                 skipped.push({ id, code: "FORBIDDEN" });
                 continue;
             }
@@ -757,7 +772,7 @@ export const bulkRestoreTasks = async (req, res, next) => {
                 continue;
             }
             const team = task.team ? await teamModel.findById(task.team) : null;
-            if (!canManageTask(req.member, task, team)) {
+            if (!(await canManageTaskInAdminScope(req.member, task, team))) {
                 skipped.push({ id, code: "FORBIDDEN" });
                 continue;
             }
@@ -812,7 +827,7 @@ export const shareTask = async (req, res, next) => {
     if (!task) throw httpError("Task not found", 404, "TASK_NOT_FOUND");
 
     const team = task.team ? await teamModel.findById(task.team) : null;
-    if (!canManageTask(req.member, task, team)) {
+    if (!(await canManageTaskInAdminScope(req.member, task, team))) {
         throw httpError("Only task managers can generate share links", 403, "FORBIDDEN");
     }
 
@@ -844,7 +859,7 @@ export const revokeShareTask = async (req, res, next) => {
     if (!task) throw httpError("Task not found", 404, "TASK_NOT_FOUND");
 
     const team = task.team ? await teamModel.findById(task.team) : null;
-    if (!canManageTask(req.member, task, team)) {
+    if (!(await canManageTaskInAdminScope(req.member, task, team))) {
         throw httpError("Only task managers can revoke share links", 403, "FORBIDDEN");
     }
 
@@ -1158,7 +1173,7 @@ export const deleteComment = async (req, res, next) => {
 
     const team = task.team ? await teamModel.findById(task.team) : null;
     const isAuthor = same(comment.author, req.member._id);
-    const isManager = canManageTask(req.member, task, team);
+    const isManager = await canManageTaskInAdminScope(req.member, task, team);
 
     if (!isAuthor && !isManager) {
         throw httpError("You are not allowed to delete this comment", 403, "FORBIDDEN");
@@ -1295,7 +1310,7 @@ export const deleteAttachment = async (req, res, next) => {
 
     const team = task.team ? await teamModel.findById(task.team) : null;
     const isUploader = same(attachment.uploadedBy, req.member._id);
-    const isManager = canManageTask(req.member, task, team);
+    const isManager = await canManageTaskInAdminScope(req.member, task, team);
 
     if (!isUploader && !isManager) {
         throw httpError("You are not allowed to delete this attachment", 403, "FORBIDDEN");
@@ -1409,7 +1424,7 @@ export const deleteTimeEntry = async (req, res, next) => {
 
     const team = task.team ? await teamModel.findById(task.team) : null;
     const isAuthor = same(entry.author, req.member._id);
-    const isManager = canManageTask(req.member, task, team);
+    const isManager = await canManageTaskInAdminScope(req.member, task, team);
 
     if (!isAuthor && !isManager) {
         throw httpError("You are not allowed to delete this time entry", 403, "FORBIDDEN");

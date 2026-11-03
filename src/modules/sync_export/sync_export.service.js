@@ -11,7 +11,7 @@ import { normalizeTaskStatus } from "../../commn/enums/task.enums.js";
 import accessConfigModel from "../../DB/models/accessConfig.js";
 import accessOverrideModel from "../../DB/models/accessOverride.js";
 import accessAuditModel from "../../DB/models/accessAudit.js";
-import { isSystemAdmin } from "../../commn/utils/permissions.js";
+import { isSystemAdmin, getAdminHierarchyScope } from "../../commn/utils/permissions.js";
 
 // Global Search
 export const search = async (req, res, next) => {
@@ -21,12 +21,33 @@ export const search = async (req, res, next) => {
 
     const regex = new RegExp(String(q).trim(), "i");
     const results = {};
+    const scope = await getAdminHierarchyScope(req.member);
+    const visibleTeamIds = await teamModel.find({
+        deletedAt: null,
+        $or: [
+            { teamMembers: req.member._id }, { teamAdims: req.member._id }, { addedBy: req.member._id },
+            ...(isSystemAdmin(req.member) ? [
+                { addedBy: { $in: scope.memberIds } },
+                { teamMembers: { $in: scope.memberIds } },
+                { teamAdims: { $in: scope.memberIds } },
+            ] : []),
+        ],
+    }).distinct("_id");
+    const assignedTaskIds = await taskAssignmentModel.find({ member: req.member._id }).distinct("task");
 
     if (searchTypes.includes("task") && q) {
         results.tasks = await taskModel
             .find({
                 deletedAt: null,
-                $or: [{ title: regex }, { description: regex }, { tags: regex }],
+                $and: [
+                    { $or: [{ title: regex }, { description: regex }, { tags: regex }] },
+                    { $or: [
+                        { team: { $in: visibleTeamIds } },
+                        { _id: { $in: assignedTaskIds } },
+                        ...(isSystemAdmin(req.member) ? [{ createdBy: { $in: scope.memberIds } }] : []),
+                        { createdBy: req.member._id },
+                    ] },
+                ],
             })
             .populate("team", "name")
             .limit(searchLimit)
@@ -38,6 +59,7 @@ export const search = async (req, res, next) => {
             .find({
                 deletedAt: null,
                 name: regex,
+                _id: { $in: visibleTeamIds },
             })
             .limit(searchLimit)
             .select("_id name");
@@ -47,7 +69,12 @@ export const search = async (req, res, next) => {
         results.members = await memberModel
             .find({
                 active: { $ne: false },
-                $or: [{ fname: regex }, { lname: regex }, { email: regex }],
+                $and: [
+                    { $or: [{ fname: regex }, { lname: regex }, { email: regex }] },
+                    isSystemAdmin(req.member)
+                        ? { _id: { $in: scope.memberIds } }
+                        : { teams: { $elemMatch: { teamId: { $in: visibleTeamIds } } } },
+                ],
             })
             .limit(searchLimit)
             .select("_id fname lname email profilePicture");
@@ -94,16 +121,28 @@ export const getChanges = async (req, res, next) => {
         .distinct("_id");
 
     // Restrict delta IDs to entities the current member is allowed to discover.
+    const scope = await getAdminHierarchyScope(req.member);
     let visibleTeamIds = await teamModel.find({
-        $or: [{ teamMembers: req.member._id }, { teamAdims: req.member._id }, { addedBy: req.member._id }],
+        $or: [
+            { teamMembers: req.member._id }, { teamAdims: req.member._id }, { addedBy: req.member._id },
+            ...(isSystemAdmin(req.member) ? [
+                { addedBy: { $in: scope.memberIds } },
+                { teamMembers: { $in: scope.memberIds } },
+                { teamAdims: { $in: scope.memberIds } },
+            ] : []),
+        ],
     }).distinct("_id");
     let visibleTaskIds = await taskModel.find({
-        $or: [{ createdBy: req.member._id }, { team: { $in: visibleTeamIds } }],
+        $or: [
+            { createdBy: req.member._id },
+            ...(isSystemAdmin(req.member) ? [{ createdBy: { $in: scope.memberIds } }] : []),
+            { team: { $in: visibleTeamIds } },
+        ],
     }).distinct("_id");
     const assignedIds = await taskAssignmentModel.find({ member: req.member._id }).distinct("task");
     visibleTaskIds = [...new Set([...visibleTaskIds.map(String), ...assignedIds.map(String)])];
     const visibleMemberIds = isSystemAdmin(req.member)
-        ? await memberModel.find({ $or: [{ _id: req.member._id }, { addedBy: req.member._id }] }).distinct("_id")
+        ? scope.memberIds
         : await memberModel.find({ teams: { $elemMatch: { teamId: { $in: visibleTeamIds } } } }).distinct("_id");
     const filterIds = (values, allowed) => values.filter((id) => allowed.has(String(id)));
     const allowedTasks = new Set(visibleTaskIds);
@@ -151,6 +190,7 @@ export const exportTasksCsv = async (req, res, next) => {
 
     // Access scoping
     {
+        const scope = await getAdminHierarchyScope(req.member);
         const userTeams = await teamModel
             .find({
                 deletedAt: null,
@@ -158,6 +198,11 @@ export const exportTasksCsv = async (req, res, next) => {
                     { teamMembers: req.member._id },
                     { teamAdims: req.member._id },
                     { addedBy: req.member._id },
+                    ...(isSystemAdmin(req.member) ? [
+                        { addedBy: { $in: scope.memberIds } },
+                        { teamMembers: { $in: scope.memberIds } },
+                        { teamAdims: { $in: scope.memberIds } },
+                    ] : []),
                 ],
             })
             .distinct("_id");
@@ -168,6 +213,7 @@ export const exportTasksCsv = async (req, res, next) => {
 
         query.$or = [
             { createdBy: req.member._id },
+            ...(isSystemAdmin(req.member) ? [{ createdBy: { $in: scope.memberIds } }] : []),
             { team: { $in: userTeams } },
             { _id: { $in: assignedTaskIds } },
         ];
@@ -256,6 +302,7 @@ export const exportReport = async (req, res, next) => {
     const query = { deletedAt: null };
     if (team) query.team = team;
 
+    const scope = await getAdminHierarchyScope(req.member);
     const userTeams = await teamModel
         .find({
             deletedAt: null,
@@ -263,6 +310,11 @@ export const exportReport = async (req, res, next) => {
                 { teamMembers: req.member._id },
                 { teamAdims: req.member._id },
                 { addedBy: req.member._id },
+                ...(isSystemAdmin(req.member) ? [
+                    { addedBy: { $in: scope.memberIds } },
+                    { teamMembers: { $in: scope.memberIds } },
+                    { teamAdims: { $in: scope.memberIds } },
+                ] : []),
             ],
         })
         .distinct("_id");
@@ -271,6 +323,7 @@ export const exportReport = async (req, res, next) => {
         .distinct("task");
     query.$or = [
         { createdBy: req.member._id },
+        ...(isSystemAdmin(req.member) ? [{ createdBy: { $in: scope.memberIds } }] : []),
         { team: { $in: userTeams } },
         { _id: { $in: assignedTaskIds } },
     ];

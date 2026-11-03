@@ -14,6 +14,7 @@ import {
     isSystemAdmin,
     same,
     normalizeTeamRole,
+    getAdminHierarchyScope,
 } from "../../commn/utils/permissions.js";
 import crypto from "crypto";
 import accessOverrideModel from "../../DB/models/accessOverride.js";
@@ -112,8 +113,9 @@ export const getProfile = async (req, res, next) => {
 
 export const getAllMembers = async (req, res, next) => {
     // Section 2.10 Contract Fix: GET /member MUST include each member's teams: [{ teamId, name, role }]
+    const scope = await getAdminHierarchyScope(req.member);
     const memberFilter = isSystemAdmin(req.member)
-        ? { $or: [{ _id: req.member._id }, { addedBy: req.member._id }] }
+        ? { _id: { $in: scope.memberIds } }
         : { teams: { $elemMatch: { teamId: { $in: (req.member.teams || []).map((t) => t.teamId) } } } };
     const members = await memberModel
         .find(memberFilter)
@@ -154,8 +156,9 @@ export const updateMember = async (req, res, next) => {
         throw httpError("You are not allowed to update this member", 403, "FORBIDDEN");
     }
 
+    const scope = isSA ? await getAdminHierarchyScope(req.member) : null;
     const member = await memberModel.findById(id);
-    if (!member || (isSA && !isSelf && String(member.addedBy || "") !== String(req.member._id))) {
+    if (!member || (isSA && !isSelf && !scope.memberIds.includes(String(member._id)))) {
         throw httpError("Member not found", 404, "USER_NOT_FOUND");
     }
 
@@ -236,8 +239,9 @@ export const deleteMember = async (req, res, next) => {
         throw httpError("You cannot delete your own admin account", 400, "BAD_REQUEST");
     }
 
+    const scope = await getAdminHierarchyScope(req.member);
     const memberToDelete = await memberModel.findById(id);
-    if (!memberToDelete || String(memberToDelete.addedBy || "") !== String(req.member._id)) {
+    if (!memberToDelete || !scope.memberIds.includes(String(memberToDelete._id))) {
         throw httpError("Member not found", 404, "USER_NOT_FOUND");
     }
 
@@ -279,8 +283,9 @@ export const resetMemberPassword = async (req, res, next) => {
     }
 
     const { id } = req.params;
+    const scope = await getAdminHierarchyScope(req.member);
     const member = await memberModel.findById(id);
-    if (!member || String(member.addedBy || "") !== String(req.member._id)) {
+    if (!member || !scope.memberIds.includes(String(member._id))) {
         throw httpError("Member not found", 404, "USER_NOT_FOUND");
     }
 
@@ -320,7 +325,8 @@ export const setMemberActive = async (req, res, next) => {
         throw httpError("You cannot deactivate your own account", 400, "BAD_REQUEST");
     }
 
-    const memberToUpdate = await memberModel.findOne({ _id: id, addedBy: req.member._id });
+    const scope = await getAdminHierarchyScope(req.member);
+    const memberToUpdate = scope.memberIds.includes(String(id)) ? await memberModel.findById(id) : null;
     if (!memberToUpdate) {
         throw httpError("Member not found", 404, "USER_NOT_FOUND");
     }
