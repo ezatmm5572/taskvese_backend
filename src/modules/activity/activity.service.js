@@ -8,7 +8,8 @@ import { createBoardActivityNotifications } from "../../commn/utils/notification
 import { recordActivity } from "../../commn/utils/activity.service.js";
 
 export const getActivity = async (req, res, next) => {
-    const taskId = req.query.taskId || req.query.task;\n    const teamId = req.query.teamId || req.query.team;
+    const taskId = req.query.taskId || req.query.task;
+    const teamId = req.query.teamId || req.query.team;
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 100);
 
     const filter = {};
