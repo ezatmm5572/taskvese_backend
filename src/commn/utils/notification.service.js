@@ -91,8 +91,7 @@ export const createBoardActivityNotifications = async ({
 
     const created = [];
     for (const userId of recipientIds) {
-        const recipient = admins.find(a => String(a._id) === userId);
-        const creator = !recipient && task?.createdBy ? String(task.createdBy) === userId : false;
+        const recipient = await memberModel.findById(userId).select("preferences").lean();
         const prefs = recipient?.preferences || {};
         if (prefs[meta.preference] === false) continue;
         const now = new Date();
