@@ -106,6 +106,8 @@ export const createCommentValidation = {
     }),
     body: joi.object({
         text: joi.string().trim().min(1).max(2000).required(),
+        taskAssignment: joi.string().hex().length(24),
+        parentComment: joi.string().hex().length(24),
     }),
 };
 
