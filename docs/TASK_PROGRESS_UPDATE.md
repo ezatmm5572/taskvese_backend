@@ -59,7 +59,20 @@ Permission keys are included in access-control validation and can be used in pre
 - Vercel Hobby-compatible cron jobs invoke GET /api/cron/reminders daily at 07:00 UTC (09:00 Egypt time) and GET /api/cron/purge daily at 01:00 UTC (03:00 Egypt time). The reminders job is daily, not hourly, because Hobby permits only daily cron schedules. Configure CRON_SECRET in Vercel. The cron middleware checks the Bearer secret when configured.
 
 ## Still outstanding / not verified
-- Signed direct-upload flow for Cloudinary (current multipart upload remains).
-- HttpOnly refresh-token cookie migration (current response-body token contract retained for compatibility).
+- Full P0–P3 frontend handoff acceptance, including staging seed credentials, exact export/notification response contracts, and authenticated Playwright integration suite.
+- Production deployment is not performed; verify Cloudinary credentials and cookie behavior in the deployed frontend domain before enabling cookie-only clients.
 - Full P0–P3 frontend handoff acceptance, including staging seed credentials, exact export/notification response contracts, and Playwright integration suite.
 - No production deployment was performed. GitHub Actions currently reports no workflow runs for this branch commit; run `npm ci`, `npm test`, syntax checks, and the frontend integration suite against staging before merging.
+
+## Signed Cloudinary attachment uploads
+
+The authenticated direct-upload flow is:
+1. `POST /task/:taskId/attachments/sign` with the access Bearer token. Returns `uploadUrl`, `cloudName`, `apiKey`, `timestamp`, `folder`, `publicId`, `signature`, and `resourceType`.
+2. Upload the file directly to the returned Cloudinary URL using multipart fields `file`, `api_key`, `timestamp`, `folder`, `public_id`, `overwrite=false`, and `signature`.
+3. `POST /task/:taskId/attachments/confirm` with `{ "publicId": "...", "version": 123, "signature": "...", "name": "file.pdf" }`. The server verifies Cloudinary's response signature, confirms the asset folder and metadata through the Cloudinary Admin API, then creates the attachment record.
+
+The server enforces task access, viewer restrictions, the 20-attachment task limit, and a 20 MB limit at confirmation. Cloudinary credentials must be configured as `CLOUD_NAME`, `API_KEY_CLOUDENARY`, and `API_SECRET_CLOUDENARY`. The existing multipart route remains available during frontend migration.
+
+## Refresh-token cookie
+
+Sign-in (password and Google) and refresh responses now set `taskverse_refresh` as an HttpOnly cookie. In production it is Secure and SameSite=None; locally it is SameSite=Lax and not Secure. Refresh middleware reads the cookie first and continues to accept a Bearer refresh token for compatibility. Logout clears the cookie. The response body still includes `refreshToken` during the frontend migration; clients should send `credentials: "include"` and move to cookie-only refresh before that legacy field is removed. CORS must list the exact frontend origin in `CORS_ORIGINS` and allow credentials.
