@@ -89,7 +89,10 @@ export const deleteNotification = async (req, res, next) => {
 
 // Web Push (VAPID) handlers
 export const getVapidPublicKey = (req, res) => {
-    const publicKey = process.env.VAPID_PUBLIC_KEY || "BNP-placeholder-vapid-public-key-for-taskverse";
+    const publicKey = process.env.VAPID_PUBLIC_KEY;
+    if (!publicKey || !process.env.VAPID_PRIVATE_KEY || !process.env.VAPID_SUBJECT) {
+        throw httpError("Web Push is not configured", 503, "PUSH_NOT_CONFIGURED");
+    }
     successResponse({
         res,
         status: 200,
@@ -100,8 +103,12 @@ export const getVapidPublicKey = (req, res) => {
 
 export const subscribePush = async (req, res, next) => {
     const { endpoint, keys } = req.body;
-    if (!endpoint || !keys) {
-        throw httpError("Endpoint and keys are required for push subscription", 400, "VALIDATION_ERROR");
+    let parsedEndpoint;
+    try { parsedEndpoint = new URL(endpoint); } catch { parsedEndpoint = null; }
+    if (!parsedEndpoint || parsedEndpoint.protocol !== "https:" || !keys ||
+        typeof keys.p256dh !== "string" || keys.p256dh.length < 40 ||
+        typeof keys.auth !== "string" || keys.auth.length < 16) {
+        throw httpError("A valid HTTPS endpoint and push encryption keys are required", 400, "VALIDATION_ERROR");
     }
 
     await memberModel.updateOne(
@@ -114,7 +121,7 @@ export const subscribePush = async (req, res, next) => {
     await memberModel.updateOne(
         { _id: req.member._id },
         {
-            $push: { pushSubscriptions: { endpoint, keys } },
+            $push: { pushSubscriptions: { $each: [{ endpoint, keys }], $slice: -5 } },
         }
     );
 
@@ -127,8 +134,10 @@ export const subscribePush = async (req, res, next) => {
 
 export const unsubscribePush = async (req, res, next) => {
     const { endpoint } = req.body;
-    if (!endpoint) {
-        throw httpError("Endpoint is required to unsubscribe", 400, "VALIDATION_ERROR");
+    let parsedEndpoint;
+    try { parsedEndpoint = new URL(endpoint); } catch { parsedEndpoint = null; }
+    if (!parsedEndpoint || parsedEndpoint.protocol !== "https:") {
+        throw httpError("A valid HTTPS endpoint is required to unsubscribe", 400, "VALIDATION_ERROR");
     }
 
     await memberModel.updateOne(
