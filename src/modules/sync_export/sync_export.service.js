@@ -291,8 +291,7 @@ export const exportTasksCsv = async (req, res, next) => {
     });
 
     // UTF-8 BOM: \uFEFF
-    const csvContent = "\uFEFF" + [headers.join(","), ...rows].join("\r
-");
+    const csvContent = "\uFEFF" + [headers.join(","), ...rows].join("\\r\\n");
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", 'attachment; filename="tasks.csv"');
