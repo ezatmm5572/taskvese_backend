@@ -4,7 +4,10 @@ const parseCookieHeader = (header = "") => Object.fromEntries(
     header.split(";").map((part) => {
         const index = part.indexOf("=");
         if (index < 0) return ["", ""];
-        return [part.slice(0, index).trim(), decodeURIComponent(part.slice(index + 1).trim())];
+        const rawValue = part.slice(index + 1).trim();
+        let value = rawValue;
+        try { value = decodeURIComponent(rawValue); } catch {}
+        return [part.slice(0, index).trim(), value];
     }).filter(([key]) => key)
 );
 
