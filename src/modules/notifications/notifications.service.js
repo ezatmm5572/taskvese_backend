@@ -4,7 +4,9 @@ import { successResponse } from "../../commn/utils/successResponse.js";
 import { httpError } from "../../commn/utils/permissions.js";
 
 export const getNotifications = async (req, res, next) => {
-    const { unread } = req.query;\n    const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1);\n    const pageSize = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 50, 1), 50);
+    const { unread } = req.query;
+    const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1);
+    const pageSize = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 50, 1), 50);
     const filter = { user: req.member._id };
 
     if (unread === "true" || unread === true) {
@@ -32,7 +34,9 @@ export const getNotifications = async (req, res, next) => {
         data: notifications || [],
         meta: {
             unread: unreadCount,
-            total: notifications.length,\n            page,\n            limit: pageSize,
+            total: notifications.length,
+            page,
+            limit: pageSize,
         },
     });
 };
