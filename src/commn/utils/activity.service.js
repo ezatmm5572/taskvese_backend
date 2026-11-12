@@ -7,6 +7,7 @@ export const recordActivity = async ({
     task = null,
     team = null,
     meta = {},
+    text = "",
 }) => {
     try {
         if (!actor || !action) return null;
@@ -16,7 +17,7 @@ export const recordActivity = async ({
             task: task || null,
             team: team || null,
             meta,
-            text: meta?.text || "",
+            text: text || meta?.text || "",
         });
         const actionTypes = {
             task_created: "task_created", task_updated: "updated", task_deleted: "task_deleted",
@@ -25,7 +26,7 @@ export const recordActivity = async ({
             time_logged: "time", member_assigned_to_task: "assigned", member_added_to_team: "team_member_added",
             task_status_updated: "status",
         };
-        const type = actionTypes[action];
+        const type = action === "task_status_updated" && ["complete", "completed"].includes(String(meta?.status || "").toLowerCase())\n            ? "completed" : actionTypes[action];
         if (type) {
             const memberModel = (await import("../../DB/models/member.js")).default;
             const actorDoc = await memberModel.findById(actor).select("fname lname").lean();
@@ -33,7 +34,7 @@ export const recordActivity = async ({
             await createBoardActivityNotifications({
                 type, actorId: actor, taskId: task, teamId: team,
                 params: { actor: actorName, action, ...meta },
-                text: `${actorName} ${action.replaceAll("_", " ")}`,
+                text: text || `${actorName} ${action.replaceAll("_", " ")}`,
             });
         }
         return activity;
