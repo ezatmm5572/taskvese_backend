@@ -143,6 +143,7 @@ export const requireTaskFieldPermissions = async (req, res, next) => {
         }
         const resolved = await resolveEffectivePermissions(req.member, config);
         const required = [...new Set(Object.keys(req.body || {}).map((field) => TASK_FIELD_PERMISSIONS[field]).filter(Boolean))];
+        if (req.path.includes("/subtasks") || req.originalUrl.includes("/subtasks")) required.push("task.editSubtasks");
         const denied = required.filter((permission) => !resolved.permissions.includes(permission));
         if (denied.length) {
             return res.status(403).json({ code: "PERMISSION_DENIED", message: "Missing permission for one or more task fields", permissions: denied });
