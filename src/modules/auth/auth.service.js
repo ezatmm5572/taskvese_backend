@@ -13,6 +13,7 @@ import { v4 as uuidv4 } from "uuid";
 import { successResponse } from "../../commn/utils/successResponse.js";
 import { OAuth2Client } from "google-auth-library";
 import { httpError } from "../../commn/utils/permissions.js";
+import { setRefreshCookie, clearRefreshCookie } from "../../commn/utils/auth-cookie.js";
 
 const confirmEmail = async ({ email, otp }) => {
     const verifyEmail = await DB_services.findOne({
@@ -280,6 +281,7 @@ export const signUpWithG = async (req, res, next) => {
         },
     });
 
+    setRefreshCookie(res, refreshToken);
     return successResponse({
         res,
         status: 200,
@@ -343,6 +345,7 @@ export const signIn = async (req, res, next) => {
         });
     } catch (e) {}
 
+    setRefreshCookie(res, refreshToken);
     successResponse({
         res,
         status: 200,
@@ -374,6 +377,7 @@ export const refreshToken = async (req, res, next) => {
         });
 
         if (cachedTokens && cachedTokens.accessToken && cachedTokens.refreshToken) {
+            setRefreshCookie(res, cachedTokens.refreshToken);
             return successResponse({
                 res,
                 status: 200,
@@ -448,6 +452,7 @@ export const refreshToken = async (req, res, next) => {
         });
     } catch (e) {}
 
+    setRefreshCookie(res, newRefreshToken);
     successResponse({
         res,
         status: 200,
@@ -460,6 +465,7 @@ export const refreshToken = async (req, res, next) => {
 };
 
 export const logout = async (req, res) => {
+    clearRefreshCookie(res);
     const member = req.member;
     const { flag } = req.query;
     if (!member) {
