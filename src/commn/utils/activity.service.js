@@ -1,4 +1,5 @@
 import activityModel from "../../DB/models/activity.js";
+import { createBoardActivityNotifications } from "./notification.service.js";
 
 export const recordActivity = async ({
     actor,
@@ -9,7 +10,7 @@ export const recordActivity = async ({
 }) => {
     try {
         if (!actor || !action) return null;
-        return await activityModel.create({
+        const activity = await activityModel.create({
             actor,
             action,
             task: task || null,
