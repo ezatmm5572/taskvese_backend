@@ -19,7 +19,21 @@ const authenticate = (expectedType = "access") => async (req, res, next) => {
         }
 
         // Refresh tokens prefer the HttpOnly cookie; Bearer remains supported during migration.
-        if (!token && expectedType === "refresh") token = getRefreshCookie(req);
+        if (!token && expectedType === "refresh") {
+            token = getRefreshCookie(req);
+            if (token) {
+                const origin = req.headers.origin;
+                const configured = (process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || "")
+                    .split(",").map((value) => value.trim().replace(/\/$/, "")).filter(Boolean);
+                const allowed = configured.length ? configured : ["http://localhost:5173", "http://localhost:5180"];
+                if (!origin || !allowed.includes(origin.replace(/\/$/, ""))) {
+                    return res.status(403).json({
+                        message: "Refresh cookie request origin is not allowed",
+                        code: "CSRF_ORIGIN_DENIED",
+                    });
+                }
+            }
+        }
 
         // Support query param ?access_token= for SSE / EventSource
         if (!token && req.query?.access_token) {
