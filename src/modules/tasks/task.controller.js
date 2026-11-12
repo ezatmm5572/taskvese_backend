@@ -48,7 +48,7 @@ import { authonticaation } from "../../commn/middleware/authontication.js";
 import { validation } from "../../commn/middleware/validation.js";
 import { attachmentUpload } from "../../commn/middleware/multer.js";
 
-import { requirePermission } from "../../commn/utils/access-control.js";
+import { requirePermission, requireTaskFieldPermissions } from "../../commn/utils/access-control.js";
 
 const taskRouter = Router();
 
@@ -68,21 +68,21 @@ taskRouter.delete("/deleteTask", authonticaation, requirePermission("task.delete
 taskRouter.post(
     "/:taskId/subtasks",
     authonticaation,
-    requirePermission("task.edit"),
+    requireTaskFieldPermissions,
     validation(createSubtaskValidation),
     createSubtask
 );
 taskRouter.patch(
     "/:taskId/subtasks/:subId",
     authonticaation,
-    requirePermission("task.edit"),
+    requireTaskFieldPermissions,
     validation(updateSubtaskValidation),
     updateSubtask
 );
 taskRouter.delete(
     "/:taskId/subtasks/:subId",
     authonticaation,
-    requirePermission("task.edit"),
+    requireTaskFieldPermissions,
     validation(deleteSubtaskValidation),
     deleteSubtask
 );
@@ -175,7 +175,7 @@ taskRouter.post("/:taskId/restore", authonticaation, requirePermission("task.del
 
 // Task get by ID, update, and delete
 taskRouter.get("/:taskId", authonticaation, requirePermission("view.tasks"), getTaskById);
-taskRouter.patch("/:taskId", authonticaation, requirePermission("task.edit"), validation(updateTaskValidation), updateTask);
+taskRouter.patch("/:taskId", authonticaation, requireTaskFieldPermissions, validation(updateTaskValidation), updateTask);
 taskRouter.delete("/:taskId", authonticaation, requirePermission("task.delete"), validation(deleteTaskValidation), deleteTask);
 
 export default taskRouter;
