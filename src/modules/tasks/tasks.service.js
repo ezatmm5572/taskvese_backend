@@ -914,7 +914,7 @@ export const getPublicTask = async (req, res, next) => {
 
 export const createSubtask = async (req, res, next) => {
     const { taskId } = req.params;
-    const { text, taskAssignment, parentComment } = req.body;
+    const { text } = req.body;
 
     const task = await taskModel.findOne({ _id: taskId, deletedAt: null });
     if (!task) throw httpError("Task not found", 404, "TASK_NOT_FOUND");
@@ -1070,7 +1070,7 @@ export const getComments = async (req, res, next) => {
 
 export const createComment = async (req, res, next) => {
     const { taskId } = req.params;
-    const { text } = req.body;
+    const { text, taskAssignment, parentComment } = req.body;
 
     const task = await taskModel.findOne({ _id: taskId, deletedAt: null });
     if (!task) throw httpError("Task not found", 404, "TASK_NOT_FOUND");
