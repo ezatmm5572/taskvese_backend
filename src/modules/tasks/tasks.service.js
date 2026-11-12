@@ -235,6 +235,12 @@ export const createTask = async (req, res, next) => {
         email: a.member?.email || "",
         profilePicture: a.member?.profilePicture || "default.png",
         status: normalizeTaskStatus(a.status),
+        progress: a.progress ?? 0,
+        progressStatus: a.progressStatus || "todo",
+        submittedAt: a.submittedAt || null,
+        reviewedAt: a.reviewedAt || null,
+        reviewedBy: a.reviewedBy || null,
+        reviewNote: a.reviewNote || "",
     }));
     taskObj.status = deriveTaskStatus(assignments);
     taskObj.subtaskCount = taskObj.subtasks?.length || 0;
