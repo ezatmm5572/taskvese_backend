@@ -17,7 +17,8 @@ export const getNotifications = async (req, res, next) => {
         .populate("task", "title")
         .populate("team", "name")
         .sort({ createdAt: -1 })
-        .limit(100);
+        .skip((page - 1) * pageSize)
+        .limit(pageSize);
 
     const unreadCount = await notificationModel.countDocuments({
         user: req.member._id,
