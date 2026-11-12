@@ -20,6 +20,8 @@ import {
     deleteComment,
     getAttachments,
     uploadAttachment,
+    signAttachmentUpload,
+    confirmAttachmentUpload,
     deleteAttachment,
     getTimeEntries,
     logTime,
@@ -115,6 +117,20 @@ taskRouter.delete(
     requirePermission("task.comment"),
     validation(deleteCommentValidation),
     deleteComment
+);
+
+// Signed direct-to-Cloudinary upload flow
+taskRouter.post(
+    "/:taskId/attachments/sign",
+    authonticaation,
+    requirePermission("task.attach"),
+    signAttachmentUpload
+);
+taskRouter.post(
+    "/:taskId/attachments/confirm",
+    authonticaation,
+    requirePermission("task.attach"),
+    confirmAttachmentUpload
 );
 
 // Attachments routes
