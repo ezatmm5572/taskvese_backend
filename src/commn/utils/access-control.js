@@ -13,7 +13,7 @@ const ALL = [...PERMISSION_KEYS];
 export const DEFAULT_PRESETS = Object.freeze({
     member: [
         "view.overview", "view.tasks", "view.teams", "view.members", "view.assignments", "view.reports",
-        "task.create", "task.edit", "task.status", "task.comment", "task.attach", "task.logTime",
+        "task.create", "task.edit", "task.editTitle", "task.editDescription", "task.editDates", "task.editTeam", "task.editPriority", "task.editTags", "task.editRecurrence", "task.editReminder", "task.editEstimate", "task.editSubtasks", "task.status", "task.comment", "task.attach", "task.logTime",
         "task.share", "report.export",
     ],
     viewer: ["view.overview", "view.tasks", "view.teams", "view.members", "view.assignments"],
