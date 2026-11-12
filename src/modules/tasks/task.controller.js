@@ -189,7 +189,7 @@ taskRouter.post("/:taskId/complete-and-spawn", authonticaation, requirePermissio
 // Task restore
 taskRouter.post("/:taskId/restore", authonticaation, requirePermission("task.delete"), validation(restoreTaskValidation), restoreTask);
 
-// Task get by ID, update, and delete
+// Task view tracking (activity alert)\ntaskRouter.post("/:taskId/view", authonticaation, async (req, res, next) => {\n    req.params.taskId = req.params.taskId;\n    const { recordTaskView } = await import("../activity/activity.service.js");\n    return recordTaskView(req, res, next);\n});\n\n// Task get by ID, update, and delete
 taskRouter.get("/:taskId", authonticaation, requirePermission("view.tasks"), getTaskById);
 taskRouter.patch("/:taskId", authonticaation, requireTaskFieldPermissions, validation(updateTaskValidation), updateTask);
 taskRouter.delete("/:taskId", authonticaation, requirePermission("task.delete"), validation(deleteTaskValidation), deleteTask);
