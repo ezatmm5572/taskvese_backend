@@ -22,6 +22,8 @@ const notificationSchema = new mongoose.Schema(
                 "reminder",
                 "team_added",
                 "team_removed",
+                "viewed", "updated", "completed", "subtask", "attachment", "time",
+                "board_visit", "member_joined", "team_member_added", "task_created", "task_deleted",
             ],
         },
         task: {
@@ -39,6 +41,8 @@ const notificationSchema = new mongoose.Schema(
             ref: "member",
             default: null,
         },
+        code: { type: String, default: null },
+        params: { type: mongoose.Schema.Types.Mixed, default: {} },
         text: {
             type: String,
             required: true,

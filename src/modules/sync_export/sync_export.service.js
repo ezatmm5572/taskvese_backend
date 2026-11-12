@@ -11,6 +11,7 @@ import { normalizeTaskStatus } from "../../commn/enums/task.enums.js";
 import accessConfigModel from "../../DB/models/accessConfig.js";
 import accessOverrideModel from "../../DB/models/accessOverride.js";
 import accessAuditModel from "../../DB/models/accessAudit.js";
+import notificationModel from "../../DB/models/notification.js";
 import { isSystemAdmin, getAdminHierarchyScope } from "../../commn/utils/permissions.js";
 
 // Global Search
@@ -172,6 +173,7 @@ export const getChanges = async (req, res, next) => {
             members: { upserted: filterIds(upsertedMembers, allowedMembers), deleted: [] },
             assignments: { upserted: visibleAssignmentIds, deleted: [] },
             access: { upserted: accessChanged ? ["config", String(req.member._id)] : [], deleted: [] },
+            notifications: { upserted: changedNotifications, deleted: [] },
         },
     });
 };
@@ -289,7 +291,7 @@ export const exportTasksCsv = async (req, res, next) => {
     });
 
     // UTF-8 BOM: \uFEFF
-    const csvContent = "\uFEFF" + [headers.join(","), ...rows].join("\r\n");
+    const csvContent = "\uFEFF" + [headers.join(","), ...rows].join("\\r\\n");
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", 'attachment; filename="tasks.csv"');

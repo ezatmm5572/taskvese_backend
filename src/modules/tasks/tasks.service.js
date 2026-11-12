@@ -35,6 +35,8 @@ import {
     spawnNextRecurrentTask,
 } from "../taskAssignment/taskAssignment.service.js";
 import crypto from "crypto";
+import cloudinary from "../../commn/utils/cloudinary.js";
+import { CLOUDENARY_API_KEY, CLOUDENARY_API_SECRET, CLOUDENARY_CLOUD_NAME } from "../../../config/config.env.js";
 
 // Check if caller has Task Access (TA)
 export const checkCanAccessTask = async (member, task, team = null) => {
@@ -235,6 +237,12 @@ export const createTask = async (req, res, next) => {
         email: a.member?.email || "",
         profilePicture: a.member?.profilePicture || "default.png",
         status: normalizeTaskStatus(a.status),
+        progress: a.progress ?? 0,
+        progressStatus: a.progressStatus || "todo",
+        submittedAt: a.submittedAt || null,
+        reviewedAt: a.reviewedAt || null,
+        reviewedBy: a.reviewedBy || null,
+        reviewNote: a.reviewNote || "",
     }));
     taskObj.status = deriveTaskStatus(assignments);
     taskObj.subtaskCount = taskObj.subtasks?.length || 0;
@@ -551,7 +559,8 @@ export const updateTask = async (req, res, next) => {
     }
 
     const team = task.team ? await teamModel.findById(task.team) : null;
-    if (!(await canManageTaskInAdminScope(req.member, task, team))) {
+    const accessControlEnabled = req.access?.enabled === true;
+    if (!accessControlEnabled && !(await canManageTaskInAdminScope(req.member, task, team))) {
         throw httpError("You are not allowed to update this task", 403, "FORBIDDEN");
     }
 
@@ -605,7 +614,7 @@ export const updateTask = async (req, res, next) => {
         if (!targetTeam) {
             throw httpError("Target team not found", 404, "NOT_FOUND");
         }
-        if (!isTeamManager(targetTeam, req.member)) {
+        if (!accessControlEnabled && !isTeamManager(targetTeam, req.member)) {
             throw httpError("You are not allowed to move tasks to this team", 403, "FORBIDDEN");
         }
         updates.team = targetTeamId;
@@ -1029,6 +1038,7 @@ export const deleteSubtask = async (req, res, next) => {
 
 export const getComments = async (req, res, next) => {
     const { taskId } = req.params;
+    const { taskAssignment } = req.query;
 
     const task = await taskModel.findOne({ _id: taskId, deletedAt: null });
     if (!task) throw httpError("Task not found", 404, "TASK_NOT_FOUND");
@@ -1039,8 +1049,16 @@ export const getComments = async (req, res, next) => {
         throw httpError("You are not allowed to view comments for this task", 403, "FORBIDDEN");
     }
 
+    if (taskAssignment) {
+        const assignment = await taskAssignmentModel.findOne({ _id: taskAssignment, task: taskId });
+        if (!assignment) throw httpError("Assignment not found", 404, "NOT_ASSIGNED");
+        if (!same(assignment.member, req.member._id) && !(await canManageTaskInAdminScope(req.member, task, team))) {
+            throw httpError("You are not allowed to view this assignment discussion", 403, "FORBIDDEN");
+        }
+    }
+
     const comments = await commentModel
-        .find({ task: taskId })
+        .find(taskAssignment ? { task: taskId, taskAssignment } : { task: taskId, taskAssignment: null })
         .populate("author", "_id fname lname email profilePicture")
         .sort({ createdAt: 1 });
 
@@ -1054,7 +1072,7 @@ export const getComments = async (req, res, next) => {
 
 export const createComment = async (req, res, next) => {
     const { taskId } = req.params;
-    const { text } = req.body;
+    const { text, taskAssignment, parentComment } = req.body;
 
     const task = await taskModel.findOne({ _id: taskId, deletedAt: null });
     if (!task) throw httpError("Task not found", 404, "TASK_NOT_FOUND");
@@ -1068,11 +1086,26 @@ export const createComment = async (req, res, next) => {
         throw httpError("You are not allowed to comment on this task", 403, "FORBIDDEN");
     }
 
+    let assignment = null;
+    if (taskAssignment) {
+        assignment = await taskAssignmentModel.findOne({ _id: taskAssignment, task: taskId });
+        if (!assignment) throw httpError("Assignment not found", 404, "NOT_ASSIGNED");
+        if (!same(assignment.member, req.member._id) && !(await canManageTaskInAdminScope(req.member, task, team))) {
+            throw httpError("You can only comment in your own assignment discussion", 403, "FORBIDDEN");
+        }
+    }
+    if (parentComment) {
+        const parent = await commentModel.findOne({ _id: parentComment, task: taskId, taskAssignment: taskAssignment || null });
+        if (!parent) throw httpError("Parent comment not found in this discussion", 404, "NOT_FOUND");
+    }
+
     // Parse mentions from text (@FirstLast)
     const mentionedMemberIds = await extractMentions(text, team);
 
     const comment = await commentModel.create({
         task: taskId,
+        taskAssignment: taskAssignment || null,
+        parentComment: parentComment || null,
         author: req.member._id,
         text,
         mentions: mentionedMemberIds,
@@ -1201,6 +1234,136 @@ export const deleteComment = async (req, res, next) => {
 // -------------------------------------------------------------
 // Attachments (Section 4.5): Viewers get 403 VIEWER_READ_ONLY
 // -------------------------------------------------------------
+
+export const signAttachmentUpload = async (req, res) => {
+    const { taskId } = req.params;
+    const task = await taskModel.findOne({ _id: taskId, deletedAt: null });
+    if (!task) throw httpError("Task not found", 404, "TASK_NOT_FOUND");
+
+    const team = task.team ? await teamModel.findById(task.team) : null;
+    assertNotViewer(team, req.member);
+    if (!(await checkCanAccessTask(req.member, task, team))) {
+        throw httpError("You are not allowed to upload attachments to this task", 403, "FORBIDDEN");
+    }
+    if (!CLOUDENARY_CLOUD_NAME || !CLOUDENARY_API_KEY || !CLOUDENARY_API_SECRET) {
+        throw httpError("Cloudinary is not configured", 503, "UPLOAD_PROVIDER_UNAVAILABLE");
+    }
+    if (await attachmentModel.countDocuments({ task: taskId }) >= 20) {
+        throw httpError("Maximum 20 attachments allowed per task", 400, "ATTACHMENT_LIMIT_EXCEEDED");
+    }
+
+    const timestamp = Math.floor(Date.now() / 1000);
+    const folder = `task_attachments/${taskId}`;
+    const publicId = crypto.randomUUID();
+    const paramsToSign = { folder, public_id: publicId, timestamp, overwrite: false };
+    const signature = cloudinary.utils.api_sign_request(paramsToSign, CLOUDENARY_API_SECRET);
+
+    successResponse({
+        res,
+        status: 200,
+        message: "Upload signature created",
+        data: {
+            uploadUrl: `https://api.cloudinary.com/v1_1/${CLOUDENARY_CLOUD_NAME}/auto/upload`,
+            cloudName: CLOUDENARY_CLOUD_NAME,
+            apiKey: CLOUDENARY_API_KEY,
+            timestamp,
+            folder,
+            publicId,
+            signature,
+            resourceType: "auto",
+        },
+    });
+};
+
+export const confirmAttachmentUpload = async (req, res) => {
+    const { taskId } = req.params;
+    const { publicId, version, signature, name } = req.body || {};
+    if (!publicId || !version || !signature || !name || typeof name !== "string") {
+        throw httpError("publicId, version, signature and name are required", 422, "VALIDATION_ERROR");
+    }
+    if (name.length > 255 || /[\\/]/.test(name)) {
+        throw httpError("Invalid attachment name", 422, "VALIDATION_ERROR");
+    }
+
+    const task = await taskModel.findOne({ _id: taskId, deletedAt: null });
+    if (!task) throw httpError("Task not found", 404, "TASK_NOT_FOUND");
+    const team = task.team ? await teamModel.findById(task.team) : null;
+    assertNotViewer(team, req.member);
+    if (!(await checkCanAccessTask(req.member, task, team))) {
+        throw httpError("You are not allowed to upload attachments to this task", 403, "FORBIDDEN");
+    }
+
+    const expectedFolder = `task_attachments/${taskId}`;
+    const normalizedPublicId = String(publicId).trim();
+    if (!/^[a-zA-Z0-9_/-]{1,255}$/.test(normalizedPublicId)) {
+        throw httpError("Invalid Cloudinary public ID", 422, "VALIDATION_ERROR");
+    }
+    const expectedSignature = cloudinary.utils.api_sign_request(
+        { public_id: normalizedPublicId, version: Number(version) },
+        CLOUDENARY_API_SECRET
+    );
+    const supplied = String(signature).replace(/^v1=/, "");
+    const safeEqual = (left, right) => {
+        const a = Buffer.from(String(left));
+        const b = Buffer.from(String(right));
+        return a.length === b.length && crypto.timingSafeEqual(a, b);
+    };
+    if (!safeEqual(expectedSignature, supplied)) {
+        throw httpError("Cloudinary upload signature is invalid", 401, "INVALID_UPLOAD_SIGNATURE");
+    }
+
+    let asset = null;
+    for (const resourceType of ["image", "raw", "video"]) {
+        try {
+            asset = await cloudinary.api.resource(normalizedPublicId, { resource_type: resourceType });
+            if (asset) break;
+        } catch (error) {
+            if (error?.http_code !== 404 && error?.error?.http_code !== 404) throw error;
+        }
+    }
+    if (!asset || asset.folder !== expectedFolder || Number(asset.version) !== Number(version)) {
+        throw httpError("Uploaded Cloudinary asset could not be verified", 422, "UPLOAD_NOT_VERIFIED");
+    }
+    if (!Number.isFinite(asset.bytes) || asset.bytes <= 0 || asset.bytes > 20 * 1024 * 1024) {
+        await deleteCloudinaryResource(normalizedPublicId);
+        throw httpError("Attachment must be smaller than 20 MB", 413, "FILE_TOO_LARGE");
+    }
+    if (await attachmentModel.countDocuments({ task: taskId }) >= 20) {
+        await deleteCloudinaryResource(normalizedPublicId);
+        throw httpError("Maximum 20 attachments allowed per task", 400, "ATTACHMENT_LIMIT_EXCEEDED");
+    }
+
+    const mimeType = asset.resource_type === "image"
+        ? `image/${asset.format || "unknown"}`
+        : asset.resource_type === "video"
+            ? `video/${asset.format || "unknown"}`
+            : asset.format === "pdf" ? "application/pdf" : "application/octet-stream";
+
+    const attachment = await attachmentModel.create({
+        task: taskId,
+        name: name.trim(),
+        size: asset.bytes,
+        mimeType,
+        url: asset.secure_url,
+        publicId: asset.public_id,
+        uploadedBy: req.member._id,
+    });
+    await attachment.populate("uploadedBy", "_id fname lname email profilePicture");
+    await recordActivity({
+        actor: req.member._id,
+        action: "attachment_uploaded",
+        task: task._id,
+        team: task.team,
+        meta: { attachmentId: attachment._id, name: attachment.name, size: attachment.size },
+        text: `Uploaded attachment "${attachment.name}"`,
+    });
+    successResponse({
+        res,
+        status: 201,
+        message: "Attachment uploaded successfully",
+        data: attachment,
+    });
+};
 
 export const getAttachments = async (req, res, next) => {
     const { taskId } = req.params;

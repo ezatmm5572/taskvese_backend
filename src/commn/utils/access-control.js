@@ -4,7 +4,7 @@ import { httpError, isSystemAdmin, normalizeTeamRole } from "./permissions.js";
 
 export const PERMISSION_KEYS = Object.freeze([
     "view.overview", "view.tasks", "view.teams", "view.members", "view.assignments", "view.reports",
-    "task.create", "task.edit", "task.delete", "task.assign", "task.status", "task.comment",
+    "task.create", "task.edit", "task.editTitle", "task.editDescription", "task.editDates", "task.editTeam", "task.editPriority", "task.editTags", "task.editRecurrence", "task.editReminder", "task.editEstimate", "task.editSubtasks", "task.delete", "task.assign", "task.status", "task.comment",
     "task.attach", "task.logTime", "task.share", "team.create", "team.manage", "team.delete",
     "member.invite", "member.edit", "report.export",
 ]);
@@ -13,7 +13,7 @@ const ALL = [...PERMISSION_KEYS];
 export const DEFAULT_PRESETS = Object.freeze({
     member: [
         "view.overview", "view.tasks", "view.teams", "view.members", "view.assignments", "view.reports",
-        "task.create", "task.edit", "task.status", "task.comment", "task.attach", "task.logTime",
+        "task.create", "task.edit", "task.editTitle", "task.editDescription", "task.editDates", "task.editTeam", "task.editPriority", "task.editTags", "task.editRecurrence", "task.editReminder", "task.editEstimate", "task.editSubtasks", "task.status", "task.comment", "task.attach", "task.logTime",
         "task.share", "report.export",
     ],
     viewer: ["view.overview", "view.tasks", "view.teams", "view.members", "view.assignments"],
@@ -113,5 +113,42 @@ export const requirePermissionOrSelf = (permission, idParam = "id") => async (re
     try {
         if (req.member && String(req.member._id) === String(req.params?.[idParam])) return next();
         return requirePermission(permission)(req, res, next);
+    } catch (error) { next(error); }
+};
+
+const TASK_FIELD_PERMISSIONS = Object.freeze({
+    title: "task.editTitle",
+    description: "task.editDescription",
+    startDate: "task.editDates",
+    endDate: "task.editDates",
+    team: "task.editTeam",
+    teamId: "task.editTeam",
+    priority: "task.editPriority",
+    tags: "task.editTags",
+    recurrence: "task.editRecurrence",
+    remindBefore: "task.editReminder",
+    estimateMin: "task.editEstimate",
+    subtasks: "task.editSubtasks",
+    archived: "task.edit",
+});
+
+export const requireTaskFieldPermissions = async (req, res, next) => {
+    try {
+        if (!req.member) throw httpError("Authentication required", 401, "UNAUTHORIZED");
+        const config = await getAccessConfig();
+        if (!config.enabled || isSystemAdmin(req.member)) return next();
+        const role = await deriveAccessRole(req.member);
+        if (role === "viewer") {
+            return res.status(403).json({ code: "VIEWER_READ_ONLY", message: "Viewers have read-only access" });
+        }
+        const resolved = await resolveEffectivePermissions(req.member, config);
+        const required = [...new Set(Object.keys(req.body || {}).map((field) => TASK_FIELD_PERMISSIONS[field]).filter(Boolean))];
+        if (req.path.includes("/subtasks") || req.originalUrl.includes("/subtasks")) required.push("task.editSubtasks");
+        const denied = required.filter((permission) => !resolved.permissions.includes(permission));
+        if (denied.length) {
+            return res.status(403).json({ code: "PERMISSION_DENIED", message: "Missing permission for one or more task fields", permissions: denied });
+        }
+        req.access = resolved;
+        next();
     } catch (error) { next(error); }
 };

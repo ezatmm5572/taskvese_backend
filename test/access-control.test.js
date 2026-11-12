@@ -8,7 +8,14 @@ import {
 } from "../src/commn/utils/access-control.js";
 
 test("access catalog contains the complete fixed permission set", () => {
-  assert.equal(PERMISSION_KEYS.length, 21);
+  assert.equal(PERMISSION_KEYS.length, 31);
+  for (const permission of [
+    "task.editTitle", "task.editDescription", "task.editDates", "task.editTeam",
+    "task.editPriority", "task.editTags", "task.editRecurrence", "task.editReminder",
+    "task.editEstimate", "task.editSubtasks",
+  ]) {
+    assert.ok(PERMISSION_KEYS.includes(permission), `Missing permission: ${permission}`);
+  }
   assert.ok(PERMISSION_KEYS.includes("task.share"));
   assert.ok(PERMISSION_KEYS.includes("member.edit"));
   assert.ok(PERMISSION_KEYS.includes("report.export"));

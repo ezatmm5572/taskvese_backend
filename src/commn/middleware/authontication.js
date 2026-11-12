@@ -6,6 +6,7 @@ import { verifyToken } from "../utils/security/token.service.js";
 import { getValuse } from "../../DB/redis/redise.service.js";
 import { JWT_SECRET } from "../../../config/config.env.js";
 import { revoke_key } from "../../DB/redis/redise.service.js";
+import { getRefreshCookie } from "../utils/auth-cookie.js";
 
 const authenticate = (expectedType = "access") => async (req, res, next) => {
     try {
@@ -14,8 +15,23 @@ const authenticate = (expectedType = "access") => async (req, res, next) => {
 
         if (authorization) {
             const [prefix, rawToken] = authorization.split(" ");
-            if (prefix === "Bearer" && rawToken) {
-                token = rawToken;
+            if (prefix === "Bearer" && rawToken) token = rawToken;
+        }
+
+        // Refresh tokens prefer the HttpOnly cookie; Bearer remains supported during migration.
+        if (!token && expectedType === "refresh") {
+            token = getRefreshCookie(req);
+            if (token) {
+                const origin = req.headers.origin;
+                const configured = (process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || "")
+                    .split(",").map((value) => value.trim().replace(/\/$/, "")).filter(Boolean);
+                const allowed = configured.length ? configured : ["http://localhost:5173", "http://localhost:5180"];
+                if (!origin || !allowed.includes(origin.replace(/\/$/, ""))) {
+                    return res.status(403).json({
+                        message: "Refresh cookie request origin is not allowed",
+                        code: "CSRF_ORIGIN_DENIED",
+                    });
+                }
             }
         }
 

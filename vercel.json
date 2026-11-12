@@ -1,15 +1,16 @@
 {
   "version": 2,
   "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/api"
-    }
+    { "source": "/(.*)", "destination": "/api" }
   ],
   "functions": {
     "api/index.js": {
       "maxDuration": 30,
       "includeFiles": "config/config.env.js"
     }
-  }
+  },
+  "crons": [
+    { "path": "/api/cron/reminders", "schedule": "0 7 * * *" },
+    { "path": "/api/cron/purge", "schedule": "0 1 * * *" }
+  ]
 }

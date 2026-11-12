@@ -16,7 +16,7 @@ const verifyCronSecret = (req, res, next) => {
     next();
 };
 
-cronRouter.post("/reminders", verifyCronSecret, async (req, res, next) => {
+cronRouter.get("/reminders", verifyCronSecret, async (req, res, next) => {
     try {
         const result = await runRemindersCron();
         successResponse({
@@ -30,7 +30,7 @@ cronRouter.post("/reminders", verifyCronSecret, async (req, res, next) => {
     }
 });
 
-cronRouter.post("/purge", verifyCronSecret, async (req, res, next) => {
+cronRouter.get("/purge", verifyCronSecret, async (req, res, next) => {
     try {
         const result = await runPurgeCron();
         successResponse({
