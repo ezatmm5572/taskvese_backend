@@ -356,7 +356,7 @@ export const getPreferences = async (req, res, next) => {
         emailAssigned: true,
         emailMention: true,
         emailDue: true,
-        emailDigest: true,
+        emailDigest: true,\n        activityViews: true,\n        activityChanges: true,\n        activityJoins: true,
         push: {},
         quietHours: {},
     };
