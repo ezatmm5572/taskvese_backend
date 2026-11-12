@@ -108,7 +108,7 @@ app.use(
             "Idempotency-Key",
             "If-Unmodified-Since",
         ],
-        exposedHeaders: ["Content-Disposition", "ETag"],
+        exposedHeaders: ["Content-Disposition", "ETag", "Date"],
     })
 );
 
@@ -172,7 +172,7 @@ app.use("/api/cron", cronRouter);
 
 // Standardized error handling middleware
 app.use((err, req, res, next) => {
-    let status = err.statusCode || (err.code === 11000 ? 409 : (err.name === "ValidationError" ? 422 : 400));
+    let status = err.statusCode || (err.code === 11000 ? 409 : (err.name === "ValidationError" ? 422 : 500));
     let code = err.errorCode || err.code;
 
     if (err.code === 11000) {
@@ -188,11 +188,12 @@ app.use((err, req, res, next) => {
         else if (status === 409) code = "CONFLICT";
         else if (status === 422) code = "VALIDATION_ERROR";
         else if (status === 429) code = "RATE_LIMITED";
+        else if (status >= 500) { status = 500; code = "INTERNAL_ERROR"; }
         else code = "BAD_REQUEST";
     }
 
     const body = {
-        message: err.code === 11000 ? "Resource already exists" : (err.message || "Something went wrong"),
+        message: err.code === 11000 ? "Resource already exists" : (status >= 500 && process.env.NODE_ENV === "production" ? "Internal server error" : (err.message || "Something went wrong")),
         code: code,
     };
     if (err.errors) body.errors = err.errors;
