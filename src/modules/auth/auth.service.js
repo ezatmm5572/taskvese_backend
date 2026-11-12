@@ -124,6 +124,14 @@ export const adminSignUp = async (req, res) => {
 export const confirmSignUp = async (req, res) => {
     const { email, otp } = req.body;
     await confirmEmail({ email, otp });
+    const joinedMember = await memberModel.findOne({ email: email.toLowerCase() }).select("_id fname lname").lean();
+    if (joinedMember) {
+        const actorName = `${joinedMember.fname} ${joinedMember.lname}`.trim();
+        await createBoardActivityNotifications({
+            type: "member_joined", actorId: joinedMember._id,
+            params: { actor: actorName }, text: `${actorName} joined TaskVerse`,
+        });
+    }
     successResponse({
         res,
         status: 200,
