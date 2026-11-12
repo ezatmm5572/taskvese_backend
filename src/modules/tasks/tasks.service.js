@@ -908,7 +908,7 @@ export const getPublicTask = async (req, res, next) => {
 
 export const createSubtask = async (req, res, next) => {
     const { taskId } = req.params;
-    const { text } = req.body;
+    const { text, taskAssignment, parentComment } = req.body;
 
     const task = await taskModel.findOne({ _id: taskId, deletedAt: null });
     if (!task) throw httpError("Task not found", 404, "TASK_NOT_FOUND");
@@ -1030,6 +1030,7 @@ export const deleteSubtask = async (req, res, next) => {
 
 export const getComments = async (req, res, next) => {
     const { taskId } = req.params;
+    const { taskAssignment } = req.query;
 
     const task = await taskModel.findOne({ _id: taskId, deletedAt: null });
     if (!task) throw httpError("Task not found", 404, "TASK_NOT_FOUND");
@@ -1040,8 +1041,16 @@ export const getComments = async (req, res, next) => {
         throw httpError("You are not allowed to view comments for this task", 403, "FORBIDDEN");
     }
 
+    if (taskAssignment) {
+        const assignment = await taskAssignmentModel.findOne({ _id: taskAssignment, task: taskId });
+        if (!assignment) throw httpError("Assignment not found", 404, "NOT_ASSIGNED");
+        if (!same(assignment.member, req.member._id) && !(await canManageTaskInAdminScope(req.member, task, team))) {
+            throw httpError("You are not allowed to view this assignment discussion", 403, "FORBIDDEN");
+        }
+    }
+
     const comments = await commentModel
-        .find({ task: taskId })
+        .find(taskAssignment ? { task: taskId, taskAssignment } : { task: taskId, taskAssignment: null })
         .populate("author", "_id fname lname email profilePicture")
         .sort({ createdAt: 1 });
 
@@ -1069,11 +1078,26 @@ export const createComment = async (req, res, next) => {
         throw httpError("You are not allowed to comment on this task", 403, "FORBIDDEN");
     }
 
+    let assignment = null;
+    if (taskAssignment) {
+        assignment = await taskAssignmentModel.findOne({ _id: taskAssignment, task: taskId });
+        if (!assignment) throw httpError("Assignment not found", 404, "NOT_ASSIGNED");
+        if (!same(assignment.member, req.member._id) && !(await canManageTaskInAdminScope(req.member, task, team))) {
+            throw httpError("You can only comment in your own assignment discussion", 403, "FORBIDDEN");
+        }
+    }
+    if (parentComment) {
+        const parent = await commentModel.findOne({ _id: parentComment, task: taskId, taskAssignment: taskAssignment || null });
+        if (!parent) throw httpError("Parent comment not found in this discussion", 404, "NOT_FOUND");
+    }
+
     // Parse mentions from text (@FirstLast)
     const mentionedMemberIds = await extractMentions(text, team);
 
     const comment = await commentModel.create({
         task: taskId,
+        taskAssignment: taskAssignment || null,
+        parentComment: parentComment || null,
         author: req.member._id,
         text,
         mentions: mentionedMemberIds,
