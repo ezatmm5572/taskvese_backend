@@ -551,7 +551,8 @@ export const updateTask = async (req, res, next) => {
     }
 
     const team = task.team ? await teamModel.findById(task.team) : null;
-    if (!(await canManageTaskInAdminScope(req.member, task, team))) {
+    const accessControlEnabled = req.access?.enabled === true;
+    if (!accessControlEnabled && !(await canManageTaskInAdminScope(req.member, task, team))) {
         throw httpError("You are not allowed to update this task", 403, "FORBIDDEN");
     }
 
@@ -605,7 +606,7 @@ export const updateTask = async (req, res, next) => {
         if (!targetTeam) {
             throw httpError("Target team not found", 404, "NOT_FOUND");
         }
-        if (!isTeamManager(targetTeam, req.member)) {
+        if (!accessControlEnabled && !isTeamManager(targetTeam, req.member)) {
             throw httpError("You are not allowed to move tasks to this team", 403, "FORBIDDEN");
         }
         updates.team = targetTeamId;
