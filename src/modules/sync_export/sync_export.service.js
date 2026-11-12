@@ -10,7 +10,7 @@ import { deriveTaskStatus } from "../taskAssignment/taskAssignment.service.js";
 import { normalizeTaskStatus } from "../../commn/enums/task.enums.js";
 import accessConfigModel from "../../DB/models/accessConfig.js";
 import accessOverrideModel from "../../DB/models/accessOverride.js";
-import accessAuditModel from "../../DB/models/accessAudit.js";
+import accessAuditModel from "../../DB/models/accessAudit.js";\nimport notificationModel from "../../DB/models/notification.js";
 import { isSystemAdmin, getAdminHierarchyScope } from "../../commn/utils/permissions.js";
 
 // Global Search
@@ -171,7 +171,7 @@ export const getChanges = async (req, res, next) => {
             teams: { upserted: filterIds(upsertedTeams, allowedTeams), deleted: filterIds(deletedTeams, allowedTeams) },
             members: { upserted: filterIds(upsertedMembers, allowedMembers), deleted: [] },
             assignments: { upserted: visibleAssignmentIds, deleted: [] },
-            access: { upserted: accessChanged ? ["config", String(req.member._id)] : [], deleted: [] },
+            access: { upserted: accessChanged ? ["config", String(req.member._id)] : [], deleted: [] },\n            notifications: { upserted: changedNotifications, deleted: [] },
         },
     });
 };
