@@ -1294,9 +1294,9 @@ export const confirmAttachmentUpload = async (req, res) => {
     }
 
     const expectedFolder = `task_attachments/${taskId}`;
-    const normalizedPublicId = String(publicId);
-    if (!normalizedPublicId.startsWith(`${expectedFolder}/`)) {
-        throw httpError("Uploaded asset does not belong to this task", 403, "INVALID_UPLOAD");
+    const normalizedPublicId = String(publicId).trim();
+    if (!/^[a-zA-Z0-9_/-]{1,255}$/.test(normalizedPublicId)) {
+        throw httpError("Invalid Cloudinary public ID", 422, "VALIDATION_ERROR");
     }
     const expectedSignature = cloudinary.utils.api_sign_request(
         { public_id: normalizedPublicId, version: Number(version) },
