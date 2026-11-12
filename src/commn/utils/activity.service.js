@@ -26,7 +26,8 @@ export const recordActivity = async ({
             time_logged: "time", member_assigned_to_task: "assigned", member_added_to_team: "team_member_added",
             task_status_updated: "status",
         };
-        const type = action === "task_status_updated" && ["complete", "completed"].includes(String(meta?.status || "").toLowerCase())\n            ? "completed" : actionTypes[action];
+        const type = action === "task_status_updated" && ["complete", "completed"].includes(String(meta?.status || "").toLowerCase())
+            ? "completed" : actionTypes[action];
         if (type) {
             const memberModel = (await import("../../DB/models/member.js")).default;
             const actorDoc = await memberModel.findById(actor).select("fname lname").lean();
