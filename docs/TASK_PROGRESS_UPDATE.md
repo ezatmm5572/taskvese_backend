@@ -56,7 +56,7 @@ Permission keys are included in access-control validation and can be used in pre
 ## Platform fixes
 - CORS exposes Date, ETag and Content-Disposition.
 - Unhandled server errors return HTTP 500 / INTERNAL_ERROR; production responses avoid leaking internal error messages.
-- Vercel cron jobs invoke GET /api/cron/reminders hourly and GET /api/cron/purge daily at 03:00 UTC. Configure CRON_SECRET in Vercel. The cron middleware checks the Bearer secret when configured.
+- Vercel Hobby-compatible cron jobs invoke GET /api/cron/reminders daily at 07:00 UTC (09:00 Egypt time) and GET /api/cron/purge daily at 01:00 UTC (03:00 Egypt time). The reminders job is daily, not hourly, because Hobby permits only daily cron schedules. Configure CRON_SECRET in Vercel. The cron middleware checks the Bearer secret when configured.
 
 ## Still outstanding / not verified
 - Signed direct-upload flow for Cloudinary (current multipart upload remains).
